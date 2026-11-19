@@ -1,0 +1,27 @@
+{
+  "name": "uz1",
+  "kind": "synth",
+  "order": 0,
+  "loadable": true,
+  "symbol": "ENGINE_uz1",
+  "sources": [
+    "uz1.c"
+  ],
+  "defaults": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "own_envelope": true,
+  "t2_page": true,
+  "t2_swallow": true,
+  "engine_input": true,
+  "screen": {
+    "svg": "uz1.svg",
+    "symbol": "SCREEN_uz1"
+  },
+  "claims": [],
+  "author": "David Hanover",
+  "version": "0.1.0"
+}

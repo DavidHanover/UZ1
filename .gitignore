@@ -1,0 +1,5 @@
+# downloaded by build.sh (Hundekraft's source bundle and SDK)
+sdk/
+# build output: the .knl is attached to releases, not committed
+build/
+__pycache__/
