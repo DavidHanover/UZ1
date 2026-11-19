@@ -47,6 +47,9 @@ and its settings page comes up (its name at the top of the screen).
 
 Every key starts as **ONE**, a plain one-shot, until you give it a pattern.
 
+**CHOKE** (push orange): a key with CHOKE on is cut off the moment any other note starts, like an open hi-hat
+closed by the closed one. Keys without it play on over each other. The top of the screen shows `KEY F#1 CHOKE`.
+
 The first hit is always the key press itself; the ones after it are spaced by the OP-1's tempo (its BPM, or MIDI
 clock). Each new hit cuts off the one before it on the same key, as a real hi-hat chokes, and pressing a key that is
 still ratcheting starts it over. Up to six keys can play at once.
@@ -58,14 +61,21 @@ corner of the screen in that encoder's colour shows it.
 
 | Encoder | Turn | Shift + turn | Push |
 |---|---|---|---|
-| Blue | **MODE**: one, ratchet, hold, flam | **VEL**: flat, alt, human, ramp, 10 .. 100 % | copy this key |
+| Blue | **MODE**: one, ratchet, hold, flam | **VEL**: flat, alt lo/mid/hi, hum lo/hi, ramp lo/hi, sag lo/hi | copy this key |
 | Green | **COUNT** 2 .. 12 (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste the copy over this key |
-| White | **RATE** 1/8, 1/8T, 1/16 .. 1/64T | **GATE** 4 ms .. 512 ms, full | – |
-| Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | Shift: reset this key |
+| White | **RATE** 1/8, 1/8T, 1/16 .. 1/64T | **GATE** 4 ms .. 512 ms, full, or **ATTK** off, 1 .. 128 ms | **REV** on / off (Shift: GATE or ATTK) |
+| Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | **CHOKE** on / off (Shift: reset this key) |
 
-**VEL** patterns, by depth: **ALT** accent, ghost, accent, ghost (the ghosts lower by the depth); **HUMAN** each hit a
-little lower at random; **RAMP** builds from the depth below full up to full across the hits. The note's own
-velocity (MIDI, the sequencers, or the keyvel feature) scales it all.
+**VEL** patterns: **ALT** accent, ghost, accent, ghost (lo, mid, hi: the ghosts 30, 60, 80 % lower); **HUM** each
+hit a little lower at random (lo, hi: up to 30, 70 %); **RAMP** builds up across the hits (lo from 30 %, hi from
+silence); **SAG** dies away across them (lo to 30 %, hi to silence). The note's own velocity (MIDI, the sequencers, or
+the keyvel feature) scales it all.
+
+**ATTK** (Shift + white push switches the knob from GATE): each hit fades in, from off up to 128 ms. A few ms takes
+the click off; longer makes brushes and swells.
+
+**REV** (white push): the key plays the sample backwards, from the end of its LENGTH back to START. The top of the
+screen shows it, e.g. `F#1 REV CHOKE`.
 
 **SLOPE** moves the pitch hit by hit: a sinker (−) drops each repeat, a riser (+) climbs, up to 24 semitones.
 

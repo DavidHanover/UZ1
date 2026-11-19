@@ -5,16 +5,17 @@
  * are spaced by the OP-1 tempo.
  *
  *   T1     turn                          Shift + turn                  push
- *   blue   MODE: one ratchet hold flam   VEL: flat, alt, human, ramp   copy this key
+ *   blue   MODE: one ratchet hold flam   VEL: flat, alt lo mid hi, hum lo hi, ramp lo hi, sag lo hi   copy this key
  *   green  COUNT (flam: GAP)             LEVEL                         paste the copy over this key
- *   white  RATE: 1/8 .. 1/64T            GATE                          -
- *   orange PITCH +-12                    SLOPE: pitch per hit +-6      Shift: reset this key
+ *   white  RATE: 1/8 .. 1/64T            GATE, or ATTK                 REV on / off (Shift: GATE / ATTK)
+ *   orange PITCH +-12                    SLOPE: pitch per hit +-6      CHOKE on / off (Shift: reset this key)
  *
  *   T2     blue START  green LENGTH  white TUNE  orange SWING; orange push steps the SOURCE slot (AUTO, 1 .. 8)
  *
  * Modes: HOLD repeats at the rate while the key is down; RATCHET plays COUNT hits and finishes whatever the key does;
  * FLAM plays a soft grace note and the main hit GAP ms later; ONE plays one hit. A new hit cuts the one before it on the
- * same key (1.5 ms fade), as a hi-hat chokes; pressing a key that is still ratcheting starts it again.
+ * same key (1.5 ms fade), as a hi-hat chokes; pressing a key that is still ratcheting starts it again. A key with
+ * CHOKE on is cut off by any other note that starts (an open hat closed by the closed one).
  *
  * Pages follow the OP-1's 24 physical keys (F1 .. E2 from the left, whatever the octave), read at key-down from the
  * core's key velocity hook (see key_page). Notes that don't come from the keys (MIDI, the sequencers) pick their page
@@ -32,7 +33,14 @@
 
 #define UZ_NAME   "uz1"
 #define DATA_VER  1
-#define DATA_N    104
+#define DATA_N    128                         /* 8 globals, 24 x 4 key words, 24 key flag bytes (from 0.2.2) */
+#define DATA_N_V1 104                         /* without the flags: 0.1 .. 0.2.1 */
+#define KF_CHOKE  1                           /* key flags: any other note cuts this one off, */
+#define KF_REV    2                           /* the sample plays backwards, */
+#define KF_SAG    4                           /* VEL's RAMP runs down instead of up (SAG), */
+#define KF_ATK_SH 3                           /* and bits 3..6: ATTK, 0 (none) .. 15 (128 ms) */
+#define KF_ATK    (15 << KF_ATK_SH)
+#define KF_ALL    0x7F
 #define FADE      128                         /* choke and end fade, voice samples (1.45 ms); a power of two */
 #define OUT_G     23170                       /* -3 dB: up to six voices sum on the bus */
 #define NO_CLOCK  (22050 << 14)               /* beat length at 120 BPM, when the OP-1 has no clock yet */
@@ -54,7 +62,7 @@ static inline uint32_t fset(uint32_t c, int f, int v)
     const uint32_t m = ((1u << FLD[f].bits) - 1) << FLD[f].sh;
     return (c & ~m) | (((uint32_t)v << FLD[f].sh) & m);
 }
-#define CFG_DEFAULT ((uint32_t)M_ONE | (2u << 2) | (4u << 5) | (12u << 8) | (12u << 13) | (5u << 20) | (15u << 24) | (15u << 28))
+#define CFG_DEFAULT ((uint32_t)M_ONE | (2u << 2) | (4u << 5) | (12u << 8) | (12u << 13) | (15u << 24) | (15u << 28))
 
 static const uint8_t COUNTS[8]   = { 2, 3, 4, 5, 6, 8, 10, 12 };
 static const uint8_t FLAM_MS[8]  = { 10, 15, 20, 25, 30, 40, 50, 60 };
@@ -116,7 +124,7 @@ static int midi_of(uint32_t inc)
 }
 
 /* ---- the sound: globals and the 24 keys (a copy of the slot's data) ---- */
-typedef struct { uint8_t src, start, len, tune, swing; uint32_t cfg[24]; } sound_t;
+typedef struct { uint8_t src, start, len, tune, swing; uint32_t cfg[24]; uint8_t flags[24]; } sound_t;
 static sound_t snd;
 static volatile uint8_t snd_dirty;            /* pasted keys not yet stored (only input may store) */
 static volatile int8_t snd_slot = -1;
@@ -128,10 +136,39 @@ static uint32_t cfg_clean(uint32_t c)
     for (int f = 0; f < K_N; f++) if (fget(c, f) > FLD[f].max) c = fset(c, f, FLD[f].max);
     return c;
 }
+/* the VEL knob's ten positions: FLAT; ALT (every second hit lower) lo, mid, hi; HUM (each hit a little lower at
+ * random) lo, hi; RAMP (up across the hits) lo, hi; SAG (down across them) lo, hi. Kept as K_VEL and K_DEPTH (10 %
+ * steps) in the key word, SAG as RAMP plus the KF_SAG flag */
+static const struct { uint8_t m, d, sag; const char *txt; } VELP[10] = {
+    { V_FLAT, 0, 0, "FLAT" }, { V_ALT, 3, 0, "ALT LO" }, { V_ALT, 6, 0, "ALT MID" }, { V_ALT, 8, 0, "ALT HI" },
+    { V_HUMAN, 3, 0, "HUM LO" }, { V_HUMAN, 7, 0, "HUM HI" }, { V_RAMP, 7, 0, "RAMP LO" }, { V_RAMP, 10, 0, "RAMP HI" },
+    { V_RAMP, 7, 1, "SAG LO" }, { V_RAMP, 10, 1, "SAG HI" } };
+enum { VELP_N = 10 };
+static int vel_idx(uint32_t c, uint8_t fl)                  /* the position, or the nearest (older sounds' depths) */
+{
+    const int m = fget(c, K_VEL), d = fget(c, K_DEPTH), sag = m == V_RAMP && (fl & KF_SAG);
+    int best = 0, bd = 99;
+    for (int i = 0; i < VELP_N; i++) {
+        if (VELP[i].m != m || VELP[i].sag != sag) continue;
+        const int e = VELP[i].d > d ? VELP[i].d - d : d - VELP[i].d;
+        if (e < bd) { bd = e; best = i; }
+    }
+    return best;
+}
+static void vel_apply(uint32_t *c, uint8_t *fl, int i)
+{
+    *c = fset(fset(*c, K_VEL, VELP[i].m), K_DEPTH, VELP[i].d);
+    *fl = (uint8_t)(VELP[i].sag ? *fl | KF_SAG : *fl & ~KF_SAG);
+}
+static inline int atk_of(uint8_t fl) { return (fl & KF_ATK) >> KF_ATK_SH; }
+/* ATTK a (1..15): the fade-in, 2^((a - 1) / 2) ms (1 .. 128), in tenths of a ms and in voice samples */
+static inline int32_t atk_ms10(int a) { return a ? (int32_t)((10u * pow2_96((a - 1) * 48) + 32768u) >> 16) : 0; }
+static inline int32_t atk_samples(int a) { return a ? (int32_t)((pow2_96((a - 1) * 48) * 882u / 10u) >> 16) : 0; }
+
 static void sound_defaults(sound_t *s)
 {
     s->src = SRC_AUTO; s->start = 0; s->len = 100; s->tune = 12; s->swing = 0;
-    for (int k = 0; k < 24; k++) s->cfg[k] = CFG_DEFAULT;
+    for (int k = 0; k < 24; k++) { s->cfg[k] = CFG_DEFAULT; s->flags[k] = 0; }
 }
 static void sound_read(int slot, sound_t *s)
 {
@@ -148,6 +185,8 @@ static void sound_read(int slot, sound_t *s)
         const uint8_t *p = b + 8 + 4 * k;
         s->cfg[k] = cfg_clean((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
     }
+    for (int k = 0; k < 24 && DATA_N_V1 + k < n; k++) s->flags[k] = b[DATA_N_V1 + k] & KF_ALL;     /* older data: none */
+    for (int k = 0; k < 24; k++) vel_apply(&s->cfg[k], &s->flags[k], vel_idx(s->cfg[k], s->flags[k]));   /* VEL to its nearest position */
 }
 static void sound_store(int slot)
 {
@@ -156,6 +195,7 @@ static void sound_store(int slot)
     for (int k = 0; k < 24; k++) {
         const uint32_t c = snd.cfg[k];
         b[8 + 4 * k] = (uint8_t)c; b[9 + 4 * k] = (uint8_t)(c >> 8); b[10 + 4 * k] = (uint8_t)(c >> 16); b[11 + 4 * k] = (uint8_t)(c >> 24);
+        b[DATA_N_V1 + k] = snd.flags[k];
     }
     op1_engine_data_store(slot, UZ_NAME, b, DATA_N);
     snd_dirty = 0;
@@ -164,7 +204,7 @@ static void sound_store(int slot)
 static void sound_copy(sound_t *d, const sound_t *s)
 {
     d->src = s->src; d->start = s->start; d->len = s->len; d->tune = s->tune; d->swing = s->swing;
-    for (int k = 0; k < 24; k++) d->cfg[k] = s->cfg[k];
+    for (int k = 0; k < 24; k++) { d->cfg[k] = s->cfg[k]; d->flags[k] = s->flags[k]; }
 }
 /* the copy follows the current slot's data, except while pasted keys wait to be stored */
 static void sound_sync(int slot)
@@ -239,10 +279,11 @@ static void source_refresh(int own)
 }
 
 /* ---- voices ---- */
-typedef struct { uint32_t i, fr, st; int32_t g, dg, life; } ph_t;        /* a playhead: index, Q16 fraction, step */
+typedef struct { int32_t i; uint32_t fr, st; int32_t g, dg, life, arem, ainc; uint8_t rev; } ph_t;   /* a playhead: index, Q16 fraction, step; the attack's ramp; backwards */
 typedef struct {
     uint8_t live, held, started, stop, key, mode, n;
     int8_t phys;                                  /* the physical key that played it, -1: not from the keys */
+    uint8_t choke, flags;                         /* CHOKE: the next note started anywhere cuts it off; the key's flags */
     uint32_t cfg;
     int32_t hit, cd, vel;                                     /* hits played, Q8 voice samples to the next */
     const int16_t *d;
@@ -257,6 +298,7 @@ static volatile uint8_t have_clip, clip_key;     /* a key copied (blue push), wh
 static volatile uint8_t note_kind;               /* the last copy (1) or paste (2), for the screen's brief note */
 static volatile uint32_t note_seq;
 static volatile uint32_t clip;
+static volatile uint8_t clip_flags;
 
 /* for the screen: every hit (its gain and pitch) into a ring, and how many hits the newest pattern has left */
 typedef struct { int16_t g; int8_t h; uint8_t key; } vis_hit_t;
@@ -328,6 +370,8 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
     sel = (uint8_t)page;
     const uint32_t c = snd.cfg[page];
     t->cfg = c;
+    t->flags = snd.flags[page];
+    t->choke = t->flags & KF_CHOKE;
     t->mode = (uint8_t)fget(c, K_MODE);
     t->n = t->mode == M_RATCHET ? COUNTS[fget(c, K_COUNT)] : t->mode == M_FLAM ? 2 : 1;
     t->vel = op1_voice_vel_gain(self);
@@ -345,8 +389,9 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
         if (s1 - s0 >= 64) { t->d = s->d; t->s0 = s0; t->s1 = s1; }
     }
     if (!t->d) t->stop = 1;
-    for (int u = 0; u < OP1_VOICES; u++)                         /* the same key again: the older one stops */
-        if (u != v && tv[u].live && tv[u].started && tv[u].key == page && (int32_t)(tv[u].stamp - t->stamp) < 0) tv[u].stop = 1;
+    for (int u = 0; u < OP1_VOICES; u++)                         /* the same key again: the older one stops; */
+        if (u != v && tv[u].live && tv[u].started && (int32_t)(tv[u].stamp - t->stamp) < 0 && (tv[u].key == page || tv[u].choke))
+            tv[u].stop = 1;                                   /* and a choke key, whatever note this is */
     vis_trig++;
     vis_left_stamp = t->stamp;
 }
@@ -364,9 +409,12 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
     switch (fget(c, K_VEL)) {
     case V_ALT: if (k & 1) pat -= d; break;
     case V_HUMAN: t->rng = t->rng * 1664525u + 1013904223u; pat -= (d * (int32_t)(t->rng >> 17)) >> 15; break;
-    case V_RAMP: {
+    case V_RAMP: {                                            /* RAMP: up across the hits; SAG: down */
         const int nn = t->mode == M_HOLD ? 8 : t->n;
-        if (nn > 1) { const int kk = k < nn - 1 ? k : nn - 1; pat = 32767 - d + d * kk / (nn - 1); }
+        if (nn > 1) {
+            const int kk = k < nn - 1 ? k : nn - 1;
+            pat = t->flags & KF_SAG ? 32767 - d * kk / (nn - 1) : 32767 - d + d * kk / (nn - 1);
+        }
         break;
     }
     default: break;
@@ -386,13 +434,17 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
     /* choke: the hit playing fades out under the new one */
     if (t->ph[0].life > 0) {
         ph_t *o = &t->ph[1]; const ph_t *q = &t->ph[0];
-        o->i = q->i; o->fr = q->fr; o->st = q->st; o->g = q->g; o->dg = q->dg; o->life = q->life;
+        o->i = q->i; o->fr = q->fr; o->st = q->st; o->g = q->g; o->dg = q->dg; o->life = q->life; o->rev = q->rev; o->arem = 0;
         if (t->ph[1].life > FADE) t->ph[1].life = FADE;
         t->ph[1].dg = -(t->ph[1].g / t->ph[1].life) - 1;
     }
     ph_t *p = &t->ph[0];
-    p->i = (uint32_t)t->s0; p->fr = 0; p->st = st; p->g = g; p->life = life;
+    p->rev = (t->flags & KF_REV) != 0;
+    p->i = p->rev ? t->s1 - 1 : t->s0; p->fr = 0; p->st = st; p->g = g; p->life = life;
     p->dg = life <= FADE ? -(g / life) - 1 : 0;
+    p->arem = atk_samples(atk_of(t->flags));                  /* ATTK: the hit fades in */
+    if (p->arem > life) p->arem = life;
+    if (p->arem > 0) { p->ainc = g / p->arem + 1; p->g = 0; }
     UZ_TRACE(v, n, g, h, st);
     /* the next one */
     int32_t ivk = iv;
@@ -418,6 +470,7 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
         for (int j = 0; j < 2; j++) {
             ph_t *p = &t->ph[j];
             if (p->life > FADE) { p->life = FADE; p->dg = -(p->g >> 7) - 1; }
+            p->arem = 0;
         }
     }
     op1_beat_t b;
@@ -427,7 +480,7 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
     const int32_t sw = snd.swing * 32768 / 50;
     const int more = !t->stop && (t->mode == M_HOLD ? (t->held || t->hit == 0) : t->hit < t->n);
     const int16_t *d = t->d;
-    const uint32_t s1 = (uint32_t)t->s1;
+    const int32_t s0 = t->s0, s1 = t->s1;
     for (int n = 0; n < OP1_BLOCK; n++) {
         if (more && t->cd <= 0 && (t->mode == M_HOLD || t->hit < t->n)) hit_start(t, v, n, iv, sw);
         t->cd -= 256;
@@ -435,15 +488,16 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
         for (int j = 0; j < 2; j++) {
             ph_t *p = &t->ph[j];
             if (p->life <= 0) continue;
-            const int32_t a = d[p->i], bb = d[p->i + 1];
+            const int32_t a = d[p->i], bb = d[p->rev ? p->i - 1 : p->i + 1];   /* REV: towards the start */
             const int32_t s = a + (((bb - a) * (int32_t)(p->fr >> 1)) >> 15);
             y += (s * (p->g > 32767 ? 32767 : p->g)) >> 15;
             p->fr += p->st;
-            p->i += p->fr >> 16;
+            if (p->rev) p->i -= (int32_t)(p->fr >> 16); else p->i += (int32_t)(p->fr >> 16);
             p->fr &= 0xFFFF;
+            if (p->arem) { p->g += p->ainc; p->arem--; }            /* ATTK's ramp */
             if (--p->life == FADE && !p->dg) p->dg = -(p->g >> 7) - 1;
             p->g += p->dg;
-            if (p->g <= 0 || p->i + 1 >= s1) p->life = 0;
+            if ((p->g <= 0 && !p->arem) || (p->rev ? p->i <= s0 : p->i + 1 >= s1)) p->life = 0;
         }
         out[n] = op1_sat16((y * OUT_G) >> 15);
     }
@@ -460,12 +514,7 @@ static int32_t acc[2][4];
 extern const op1_engine_ext2_t ENGINE_uz1;
 static inline int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 /* the VEL knob: FLAT, then ALT, HUMAN and RAMP at 10 .. 100 % */
-static inline int vel_pos(uint32_t c) { const int m = fget(c, K_VEL); return m == V_FLAT ? 0 : (m - 1) * 10 + clampi(fget(c, K_DEPTH), 1, 10); }
-static inline uint32_t vel_set(uint32_t c, int p)
-{
-    if (p <= 0) return fset(c, K_VEL, V_FLAT);
-    return fset(fset(c, K_VEL, (p - 1) / 10 + 1), K_DEPTH, (p - 1) % 10 + 1);
-}
+static volatile uint8_t white_attk;          /* Shift + white turns ATTK (1) or GATE (0); Shift + white push switches */
 static int uz_input(int page, int ev, int a, int b)
 {
     if ((page != OP1_ENG_T1 && page != OP1_ENG_T2) || a < 0 || a > 3) return 0;
@@ -485,9 +534,12 @@ static int uz_input(int page, int ev, int a, int b)
                     if (s > 7) s = SRC_AUTO;
                     snd.src = (uint8_t)s; changed = 1; src_force = 1;
                 }
-            } else if (a == 0) { clip = snd.cfg[k]; clip_key = (uint8_t)k; have_clip = 1; note_kind = 1; note_seq++; }   /* blue: copy */
-            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; changed = 1; note_kind = 2; note_seq++; } }          /* green: paste */
-            else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; changed = 1; }
+            } else if (a == 0) { clip = snd.cfg[k]; clip_flags = snd.flags[k]; clip_key = (uint8_t)k; have_clip = 1; note_kind = 1; note_seq++; }   /* blue: copy */
+            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; snd.flags[k] = clip_flags; changed = 1; note_kind = 2; note_seq++; } }   /* green: paste */
+            else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; snd.flags[k] = 0; changed = 1; }               /* Shift + orange: reset */
+            else if (a == 3) { snd.flags[k] ^= KF_CHOKE; changed = 1; }                                       /* orange: CHOKE on / off */
+            else if (a == 2 && shift) white_attk ^= 1;                                                         /* Shift + white: GATE / ATTK */
+            else if (a == 2) { snd.flags[k] ^= KF_REV; changed = 1; }                                         /* white: REV on / off */
         }
         if (changed) sound_store(slot);
         return 1;
@@ -506,7 +558,13 @@ static int uz_input(int page, int ev, int a, int b)
             static const int8_t PLAIN[4] = { K_MODE, K_COUNT, K_RATE, K_PITCH }, SHIFTED[4] = { K_VEL, K_LEVEL, K_GATE, K_SLOPE };
             const int f = shift ? SHIFTED[a] : PLAIN[a];
             if (!field_live(c, f)) return 1;                  /* nothing to set in this mode */
-            if (f == K_VEL) c = vel_set(c, clampi(vel_pos(c) + dd, 0, 30));
+            if (f == K_GATE && white_attk) {                  /* ATTK, in the key's flags */
+                const int at = clampi(atk_of(snd.flags[k]) + dd, 0, 15);
+                snd.flags[k] = (uint8_t)((snd.flags[k] & ~KF_ATK) | (at << KF_ATK_SH));
+                sound_store(slot);
+                return 1;
+            }
+            if (f == K_VEL) { uint8_t fl = snd.flags[k]; vel_apply(&c, &fl, clampi(vel_idx(c, fl) + dd, 0, VELP_N - 1)); snd.flags[k] = fl; }
             else if (f == K_MODE) c = fset(c, f, MODE_ORDER[clampi(mode_pos(fget(c, f)) + dd, 0, M_N - 1)]);
             else c = fset(c, f, clampi(fget(c, f) + dd, 0, FLD[f].max));
             snd.cfg[k] = c;
@@ -1109,17 +1167,25 @@ static void uz_screen_update(void *scr, int dt)
         name[3] = "PITCH"; txt[3][put_num(txt[3], 0, fget(c, K_PITCH) - 12, 1)] = 0;
         val[3] = fget(c, K_PITCH) * 32767 / 24;
     } else {
-        static const char *const VT[4] = { "FLAT", "ALT ", "HUM ", "RAMP " };
-        const int vm = fget(c, K_VEL);
-        int n = put_str(txt[0], 0, VT[vm]);
-        if (vm != V_FLAT) n = put_str(txt[0], put_num(txt[0], n, clampi(fget(c, K_DEPTH), 1, 10) * 10, 0), "%");
-        txt[0][n] = 0; name[0] = "VEL"; val[0] = vel_pos(c) * 32767 / 30;
+        const int vi = vel_idx(c, view.flags[k]);
+        int n;
+        txt[0][put_str(txt[0], 0, VELP[vi].txt)] = 0; name[0] = "VEL"; val[0] = vi * 32767 / (VELP_N - 1);
         name[1] = "LEVEL"; txt[1][put_str(txt[1], put_num(txt[1], 0, -(15 - fget(c, K_LEVEL)) * 2, 0), "DB")] = 0;
         val[1] = fget(c, K_LEVEL) * 32767 / 15;
-        name[2] = "GATE";
-        if (fget(c, K_GATE) == 15) txt[2][put_str(txt[2], 0, "FULL")] = 0;
-        else txt[2][put_ms(txt[2], 0, (int32_t)((4u * pow2_96(fget(c, K_GATE) * 48)) >> 16))] = 0;
-        val[2] = fget(c, K_GATE) * 32767 / 15;
+        if (white_attk) {                                     /* ATTK: off, 1.0MS .. 128MS */
+            const int at = atk_of(view.flags[k]);
+            const int32_t m10 = atk_ms10(at);
+            name[2] = "ATTK";
+            if (!at) n = put_str(txt[2], 0, "OFF");
+            else if (m10 < 100) { n = put_num(txt[2], 0, m10 / 10, 0); txt[2][n++] = '.'; txt[2][n++] = (char)('0' + m10 % 10); n = put_str(txt[2], n, "MS"); }
+            else n = put_ms(txt[2], 0, (m10 + 5) / 10);
+            txt[2][n] = 0; val[2] = at * 32767 / 15;
+        } else {
+            name[2] = "GATE";
+            if (fget(c, K_GATE) == 15) txt[2][put_str(txt[2], 0, "FULL")] = 0;
+            else txt[2][put_ms(txt[2], 0, (int32_t)((4u * pow2_96(fget(c, K_GATE) * 48)) >> 16))] = 0;
+            val[2] = fget(c, K_GATE) * 32767 / 15;
+        }
         const int sl = fget(c, K_SLOPE) - 12;                 /* half semitones a hit */
         n = put_num(txt[3], 0, sl / 2, sl > 0);
         if (sl == -1) { n = 0; txt[3][n++] = '-'; txt[3][n++] = '0'; }
@@ -1142,6 +1208,7 @@ static void uz_screen_update(void *scr, int dt)
     uint32_t lh = 2166136261u;
     for (int i = 0; i < 4; i++) { lh = hash_str(lh, name[i]); lh = hash_str(lh, txt[i]); lh = (lh ^ (uint32_t)(val[i] < 0 ? 0xFFFFFFFFu : (uint32_t)val[i] >> 6)) * 16777619u; }
     lh = hash_str(hash_str(lh, title), status);
+    lh = ((lh ^ view.flags[k]) * 16777619u ^ white_attk) * 16777619u;
     static uint32_t last_lh;
     if (lh != last_lh) { last_lh = lh; op1_screen_static_dirty(scr); }
     static const op1_rect_t DYN[2] = { { 0, BAND_Y0, 319, BAND_Y1 }, { COL_X0, BAND_Y1 + 1, COL_X1, SCR_Y1 } };
@@ -1150,7 +1217,15 @@ static void uz_screen_update(void *scr, int dt)
     if (op1_screen_static(scr)) {
         op1_screen_draw(scr, dt);
         labels(r, name, txt, val);
-        sq_text(r, PX(160) - sq_width(LBL_S, title) / 2, PX(6), LBL_S, title, 1024, COL_WHITE);
+        {                                                     /* KEY F#1, or F#1 REV CHOKE: the tags in their knob's colour */
+            const int rv = (view.flags[k] & KF_REV) != 0, ck = (view.flags[k] & KF_CHOKE) != 0;
+            const char *base = rv || ck ? title + 4 : title;     /* drop the KEY when there are tags */
+            const int32_t wb = sq_width(LBL_S, base), wr = rv ? sq_width(LBL_S, " REV") : 0, wc = ck ? sq_width(LBL_S, " CHOKE") : 0;
+            int32_t x = PX(160) - (wb + wr + wc) / 2;
+            sq_text(r, x, PX(6), LBL_S, base, 1024, COL_WHITE); x += wb;
+            if (rv) { sq_text(r, x, PX(6), LBL_S, " REV", 1024, COL_KNOB[2]); x += wr; }
+            if (ck) sq_text(r, x, PX(6), LBL_S, " CHOKE", 1024, COL_KNOB[3]);
+        }
         if (status[0]) sq_text(r, PX(160) - sq_width(1024, status) / 2, PX(15), 1024, status, 1024, look.ok ? COL_KNOB[1] : COL_RED);
         op1_screen_static_done(scr);
     }

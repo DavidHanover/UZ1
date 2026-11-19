@@ -131,6 +131,8 @@ static void put_sound(int slot, int src, int start, int len, int tune, int swing
     snd_dirty = 0; snd_slot = -1; src_force = 1;
 }
 static uint32_t C24[24];
+static void key_flags(int slot, int k, int fl) { host_eng_data[slot][DATA_N_V1 + k] = (uint8_t)fl; snd_slot = -1; }
+static void choke_key(int slot, int k, int on) { host_eng_data[slot][DATA_N_V1 + k] = (uint8_t)(on ? KF_CHOKE : 0); snd_slot = -1; }
 static void all_keys(uint32_t c) { for (int k = 0; k < 24; k++) C24[k] = c; }
 static void sound1(uint32_t c) { all_keys(c); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); }
 static int page_midi(int page) { return PAGE_BASE + page; }
@@ -331,15 +333,20 @@ int main(int argc, char **argv)
     wav("riser_12x64");
 
     /* 8. velocity patterns and level */
-    sound1(kcfg(M_RATCHET, 3, 4, 0, 0, V_ALT, 5, 15, 15));
+    sound1(kcfg(M_RATCHET, 3, 4, 0, 0, V_ALT, 6, 15, 15));
     reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
-    int alt = nhits == 5; for (int h = 0; h < nhits; h++) if (fabs(hits[h].g / (double)hits[0].g - (h & 1 ? 0.5 : 1)) > 0.01) alt = 0;
-    CHECK(alt, "ALT 50 %%: accent, ghost at half, accent ...");
+    int alt = nhits == 5; for (int h = 0; h < nhits; h++) if (fabs(hits[h].g / (double)hits[0].g - (h & 1 ? 0.4 : 1)) > 0.01) alt = 0;
+    CHECK(alt, "ALT MID (60 %%): accent, ghost at 40 %%, accent ...");
     wav("alt_5x32");
     sound1(kcfg(M_RATCHET, 3, 4, 0, 0, V_RAMP, 10, 15, 15));
     reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
     int ramp = nhits == 5 && hits[0].g < 300; for (int h = 1; h < nhits; h++) if (fabs(hits[h].g / (double)hits[4].g - h / 4.0) > 0.01) ramp = 0;
-    CHECK(ramp, "RAMP 100 %%: from silence up to full over the 5 hits");
+    CHECK(ramp, "RAMP HI (100 %%): from silence up to full over the 5 hits");
+    key_flags(0, 0, KF_SAG); reset(); on(0, page_midi(0), 127); run_blocks(1); off(0); run_ms(800);
+    int sag = nhits == 5 && hits[4].g < 300; for (int h = 0; h < 4; h++) if (fabs(hits[h].g / (double)hits[0].g - (1 - h / 4.0)) > 0.01) sag = 0;
+    CHECK(sag, "SAG HI (100 %%): from full down to silence over the 5 hits");
+    wav("sag_5x32");
+    key_flags(0, 0, 0);
     sound1(kcfg(M_RATCHET, 7, 6, 0, 0, V_HUMAN, 3, 15, 15));
     reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
     int lo = 1 << 30, hi = 0; for (int h = 0; h < nhits; h++) { if (hits[h].g < lo) lo = hits[h].g; if (hits[h].g > hi) hi = hits[h].g; }
@@ -347,6 +354,23 @@ int main(int argc, char **argv)
     sound1(kcfg(M_RATCHET, 0, 4, 0, 0, V_FLAT, 0, 15, 15));
     reset(); on(0, 60, 64); run_ms(300); int g64 = hits[0].g;
     CHECK(fabs(g64 / 32767.0 - 64 / 127.0) < 0.01, "the note's velocity scales the hits (64: %.3f)", g64 / 32767.0);
+    /* ATTK: each hit fades in; REV: the sample backwards */
+    { make_sine(1, 3000, 40000, 441, 20000); sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15));
+      reset(); on(0, page_midi(0), 127); run_ms(100); const int crisp = peak(0, at(1));
+      key_flags(0, 0, 13 << KF_ATK_SH); reset(); on(0, page_midi(0), 127); run_ms(100);       /* 13: 64 ms */
+      const int p8 = peak(0, at(8)), p32 = peak(at(28), at(36)), p80 = peak(at(70), at(90));
+      CHECK(crisp > 10000 && p8 < p32 && p32 < p80 && p8 < 3000 && fabs(p32 / (double)p80 - 0.5) < 0.1,
+            "ATTK 64 ms: the hit fades in (%d at 8 ms, %d at 32, %d after; %d without)", p8, p32, p80, crisp);
+      make_hat(1, 3000, 6000); key_flags(0, 0, 0); sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15));
+      reset(); on(0, page_midi(0), 127); run_ms(200); const int fwd_a = peak(0, at(10)), fwd_b = peak(at(50), at(60));
+      key_flags(0, 0, KF_REV); reset(); on(0, page_midi(0), 127); run_ms(200);
+      const int rev_a = peak(0, at(10)), rev_b = peak(at(50), at(60));
+      CHECK(fwd_a > 4 * fwd_b && rev_b > 4 * rev_a, "REV: the hat plays backwards, quiet to loud (%d then %d; forwards %d then %d)", rev_a, rev_b, fwd_a, fwd_b);
+      wav("rev_hat");
+      sound1(kcfg(M_RATCHET, 3, 4, 0, 0, V_FLAT, 0, 15, 15)); key_flags(0, 0, KF_REV | (8 << KF_ATK_SH));
+      reset(); on(0, page_midi(0), 127); run_blocks(1); off(0); run_ms(600);
+      CHECK(nhits == 5 && !any_active(), "a reversed, fading-in ratchet plays its 5 hits and ends");
+      wav("rev_attk_ratchet"); key_flags(0, 0, 0); }
     sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 12));
     reset(); on(0, 60, 127); run_ms(300);
     CHECK(fabs(20 * log10(hits[0].g / 32767.0) + 6) < 0.1, "LEVEL three steps down: -6 dB (%.2f)", 20 * log10(hits[0].g / 32767.0));
@@ -375,6 +399,23 @@ int main(int argc, char **argv)
     CHECK(!active[0] || ENGINE_uz1.ext.finished(OP1_VOICE(0)), "the same key again stops the ratchet it started");
     run_ms(3200);
     CHECK(hits_of(0) == 3 && hits_of(1) == 12, "and starts it over (%d hits before, %d after)", hits_of(0), hits_of(1));
+
+    /* 11b. CHOKE: a key with it is cut off by any other note; without it, it plays on */
+    all_keys(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15)); C24[2] = kcfg(M_RATCHET, 7, 0, 0, 0, V_FLAT, 0, 15, 15);   /* 12 x 1/8: 3 s */
+    put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
+    reset(); on(0, page_midi(2), 127); run_blocks(1); off(0); run_ms(600); on(1, page_midi(9), 127); run_blocks(1); off(1); run_ms(3000);
+    CHECK(hits_of(0) == 12, "without CHOKE a ratchet plays on through another key's note (%d hits)", hits_of(0));
+    choke_key(0, 2, 1);
+    reset(); on(0, page_midi(2), 127); run_blocks(1); off(0); run_ms(600); on(1, page_midi(9), 127); run_blocks(1); off(1); run_ms(100);
+    const int choked = hits_of(0);
+    CHECK(choked == 3 && (!active[0] || ENGINE_uz1.ext.finished(OP1_VOICE(0))), "with CHOKE the next note, on another key, cuts it off (%d hits, then stopped)", choked);
+    run_ms(3000);
+    CHECK(hits_of(0) == 3 && hits_of(1) == 1, "and only it: the other note plays");
+    reset(); on(0, page_midi(9), 127); run_blocks(1); off(0); on(1, page_midi(2), 127); run_blocks(1); off(1); run_ms(400);
+    CHECK(hits_of(0) == 1 && hits_of(1) == 2, "a CHOKE key started after another note doesn't stop that one");
+    host_eng_data_n[0] = DATA_N_V1; snd_slot = -1; sound_read(0, &snd);
+    CHECK(snd.flags[2] == 0 && snd.cfg[2] == C24[2], "a sound saved by 0.2 or before (104 bytes) loads with CHOKE off, its keys as they were");
+    host_eng_data_n[0] = DATA_N; choke_key(0, 2, 0);
 
     /* 12. swing: every second gap later */
     all_keys(kcfg(M_RATCHET, 3, 2, 0, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, 0, 25, C24);
@@ -446,9 +487,26 @@ int main(int argc, char **argv)
     CHECK(fget(c7, K_COUNT) == 5 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "RATCHET: green COUNT, white RATE, orange PITCH (clamped at +12)");
     turn(OP1_ENG_T1, 0, 3, 1); turn(OP1_ENG_T1, 1, -3, 1); turn(OP1_ENG_T1, 2, -11, 1); turn(OP1_ENG_T1, 3, -5, 1);
     c7 = stored_cfg(0, 7);
-    CHECK(fget(c7, K_VEL) == V_ALT && fget(c7, K_DEPTH) == 3 && fget(c7, K_LEVEL) == 12 && fget(c7, K_GATE) == 4 && fget(c7, K_SLOPE) == 7, "Shift: VEL (ALT 30 %%), LEVEL, GATE, SLOPE");
-    turn(OP1_ENG_T1, 0, 12, 1);
-    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_HUMAN && fget(stored_cfg(0, 7), K_DEPTH) == 5, "VEL runs on from ALT into HUMAN (50 %%)");
+    CHECK(fget(c7, K_VEL) == V_ALT && fget(c7, K_DEPTH) == 8 && fget(c7, K_LEVEL) == 12 && fget(c7, K_GATE) == 4 && fget(c7, K_SLOPE) == 7, "Shift: VEL (three on: ALT HI, 80 %%), LEVEL, GATE, SLOPE");
+    turn(OP1_ENG_T1, 0, 1, 1);
+    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_HUMAN && fget(stored_cfg(0, 7), K_DEPTH) == 3, "VEL: then HUM LO (30 %%)");
+    turn(OP1_ENG_T1, 0, 20, 1);
+    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_RAMP && fget(stored_cfg(0, 7), K_DEPTH) == 10 && (host_eng_data[0][DATA_N_V1 + 7] & KF_SAG), "VEL ends at SAG HI (a falling ramp, 100 %%)");
+    turn(OP1_ENG_T1, 0, -2, 1);
+    CHECK(fget(stored_cfg(0, 7), K_DEPTH) == 10 && !(host_eng_data[0][DATA_N_V1 + 7] & KF_SAG), "two back: RAMP HI, SAG off");
+    turn(OP1_ENG_T1, 0, -2, 1);
+    /* white: REV (push), Shift + white push: the knob turns ATTK instead of GATE */
+    CHECK(push(OP1_ENG_T1, 2, 0) == 1 && (host_eng_data[0][DATA_N_V1 + 7] & KF_REV), "white push: REV on for the shown key");
+    push(OP1_ENG_T1, 2, 0);
+    CHECK(!(host_eng_data[0][DATA_N_V1 + 7] & KF_REV), "and off again");
+    push(OP1_ENG_T1, 2, 1); const int g7 = fget(stored_cfg(0, 7), K_GATE);
+    turn(OP1_ENG_T1, 2, 6, 1);
+    CHECK(white_attk && ((host_eng_data[0][DATA_N_V1 + 7] & KF_ATK) >> KF_ATK_SH) == 6 && fget(stored_cfg(0, 7), K_GATE) == g7, "Shift + white push: the knob sets ATTK now (6), GATE left alone");
+    turn(OP1_ENG_T1, 2, 40, 1);
+    CHECK(((host_eng_data[0][DATA_N_V1 + 7] & KF_ATK) >> KF_ATK_SH) == 15, "ATTK stops at its longest (128 ms)");
+    push(OP1_ENG_T1, 2, 1); turn(OP1_ENG_T1, 2, 1, 1);
+    CHECK(!white_attk && fget(stored_cfg(0, 7), K_GATE) == g7 + 1 && ((host_eng_data[0][DATA_N_V1 + 7] & KF_ATK) >> KF_ATK_SH) == 15, "and back to GATE");
+    key_flags(0, 7, 0); snd_slot = -1; sound_sync(0);
     turn(OP1_ENG_T1, 0, 1, 0); c7 = stored_cfg(0, 7);                           /* HOLD */
     turn(OP1_ENG_T1, 1, 2, 0);
     CHECK(fget(c7, K_MODE) == M_HOLD && stored_cfg(0, 7) == c7, "HOLD: COUNT does nothing (it repeats while held)");
@@ -478,9 +536,32 @@ int main(int argc, char **argv)
       for (int i = 0; i < 120; i++) frame("pasted, later");
       h3 = text_hash();
       CHECK(h0 != h1 && h2 != h1 && h2 != h0 && h3 == h1, "COPIED and PASTED show briefly, then the top is clear again"); }
-    push(OP1_ENG_T1, 3, 1);
-    CHECK(stored_cfg(0, 11) == CFG_DEFAULT && stored_cfg(0, 2) == clip, "Shift + orange push resets the shown key only");
-    CHECK(push(OP1_ENG_T1, 3, 0) == 1 && stored_cfg(0, 11) == CFG_DEFAULT, "orange push without Shift does nothing (but is taken)");
+    CHECK(push(OP1_ENG_T1, 3, 0) == 1 && host_eng_data[0][DATA_N_V1 + 11] == KF_CHOKE && stored_cfg(0, 11) == clip, "orange push: CHOKE on for the shown key, stored, its settings kept");
+    push(OP1_ENG_T1, 3, 0);
+    CHECK(host_eng_data[0][DATA_N_V1 + 11] == 0, "and off again");
+    push(OP1_ENG_T1, 3, 0); push(OP1_ENG_T1, 0, 0); play_key(5); push(OP1_ENG_T1, 1, 0);
+    CHECK(host_eng_data[0][DATA_N_V1 + 5] == KF_CHOKE && stored_cfg(0, 5) == clip, "copy and paste carry CHOKE with the rest");
+    { /* everything a key has, copied and pasted: the word (MODE .. LEVEL, VEL's SAG position) and the flags (CHOKE,
+       * REV, SAG, ATTK) */
+      const uint32_t full = kcfg(M_RATCHET, 5, 6, -3, 2, V_RAMP, 7, 9, 13);
+      const uint8_t fl = KF_CHOKE | KF_REV | KF_SAG | (11 << KF_ATK_SH);
+      all_keys(CFG_DEFAULT); C24[14] = full; put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); key_flags(0, 14, fl);
+      play_key(14); push(OP1_ENG_T1, 0, 0); play_key(20); push(OP1_ENG_T1, 1, 0);
+      CHECK(stored_cfg(0, 20) == full && host_eng_data[0][DATA_N_V1 + 20] == fl, "copy and paste carry every setting: the key word and CHOKE, REV, SAG (SAG LO), ATTK");
+      snd_slot = -1; sound_sync(0);
+      CHECK(vel_idx(snd.cfg[20], snd.flags[20]) == 8 && atk_of(snd.flags[20]) == 11, "and read back: VEL SAG LO, ATTK 11");
+      reset(); on(0, page_midi(14), 127); run_blocks(1); off(0); run_ms(1500); const int na = nhits; int ga[16]; for (int i = 0; i < na && i < 16; i++) ga[i] = hits[i].g;
+      const size_t la = rec_n; int16_t *ra = malloc(la * 2); memcpy(ra, rec, la * 2);
+      reset(); on(0, page_midi(20), 127); run_blocks(1); off(0); run_ms(1500);
+      int same = nhits == na && rec_n == la && !memcmp(ra, rec, la * 2); for (int i = 0; i < na && i < 16; i++) if (hits[i].g != ga[i]) same = 0;
+      free(ra);
+      CHECK(same && na == 8, "the pasted key plays exactly like the copied one (%d hits, the same samples)", na);
+      push(OP1_ENG_T1, 1, 1); }
+    put_sound(0, SRC_AUTO, 0, 100, 0, 0, 0); all_keys(CFG_DEFAULT);
+    push(OP1_ENG_T1, 0, 0); play_key(2); push(OP1_ENG_T1, 0, 0);
+    { uint32_t cc = kcfg(M_RATCHET, 1, 1, 0, 0, V_FLAT, 0, 15, 15); C24[2] = cc; put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); play_key(2); push(OP1_ENG_T1, 0, 0); play_key(11); push(OP1_ENG_T1, 1, 0); }
+    play_key(11); push(OP1_ENG_T1, 3, 1);
+    CHECK(stored_cfg(0, 11) == CFG_DEFAULT && host_eng_data[0][DATA_N_V1 + 11] == 0 && stored_cfg(0, 2) == clip, "Shift + orange push resets the shown key only, CHOKE too");
     /* T2: the globals and the source */
     put_sound(0, SRC_AUTO, 0, 100, 0, 0, 0);
     turn(OP1_ENG_T2, 0, 20, 0); turn(OP1_ENG_T2, 1, -30, 0); turn(OP1_ENG_T2, 2, -40, 0); turn(OP1_ENG_T2, 3, 30, 0);
@@ -536,6 +617,15 @@ int main(int argc, char **argv)
           if (lines[j].y0 == lines[j].y1 && lines[j].y0 == OP1_Q10(LBL_Y1 + 11) && lines[j].x0 < OP1_Q10(104)) gauge_w++; }
       CHECK(gauge_r == 0 && gauge_w == 0 && grey_txt > 10, "a one-shot page: COUNT and RATE grey, with no gauge (%d, %d gauge lines)", gauge_r, gauge_w); }
     all_keys(CFG_DEFAULT); C24[3] = kcfg(M_RATCHET, 3, 4, 0, -2, V_ALT, 5, 15, 15); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
+    { choke_key(0, 3, 1); play_key(3); frame("choke key");
+      int orange = 0, bad_c; int cor_c[4], txt_c; text_scan(&txt_c, cor_c, &bad_c);
+      for (int j = 0; j < dyn_from; j++) orange += lines[j].w == 1024 && lines[j].y0 < OP1_Q10(20) && lines[j].x0 > OP1_Q10(104) && lines[j].x0 < OP1_Q10(216) && lines[j].c[0] == COL_KNOB[3][0] && lines[j].c[1] == COL_KNOB[3][1];
+      CHECK(orange > 10 && !bad_c, "a CHOKE key's page says so at the top, in orange, and it fits (%d strokes)", orange);
+      key_flags(0, 3, KF_CHOKE | KF_REV | (15 << KF_ATK_SH)); play_key(3); frame("rev and choke"); text_scan(&txt_c, cor_c, &bad_c);
+      CHECK(!bad_c, "F#1 REV CHOKE fits at the top");
+      white_attk = 1; host_shift_held = 1; frame("shift: ATTK"); text_scan(&txt_c, cor_c, &bad_c); host_shift_held = 0; white_attk = 0;
+      CHECK(!bad_c, "Shift with ATTK on white: the longest value (128MS) fits");
+      choke_key(0, 3, 0); play_key(3); }
     host_shift_held = 1; frame("shift: the second set"); text_scan(&txt, cor, &bad); host_shift_held = 0;
     CHECK(text_hash() != h_plain && !bad, "Shift shows the second set, and it fits");
     /* the longest values fit */

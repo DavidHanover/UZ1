@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 — 2026-11-18
+
+- VEL has ten positions: FLAT, ALT LO / MID / HI (30, 60, 80 %), HUM LO / HI (30, 70 %), RAMP LO / HI (70, 100 %),
+  and the new SAG LO / HI (70, 100 %): the hits die away. Sounds saved with other depths take the nearest position.
+- ATTK, per key: Shift + white push switches that knob between GATE and ATTK; each hit fades in, off or 1 to 128 ms.
+- REV, per key (white push): the sample plays backwards, from the end of its LENGTH back to START.
+- CHOKE, per key (orange push): a key with it is cut off (1.5 ms fade) the moment any other note starts, an open
+  hat closed by the closed one. Shift + orange (reset) clears it.
+- The top of the screen tags a key: `F#1 REV CHOKE`, the tags in their knob's colour.
+- The saved data grows to 128 bytes: a flag byte per key after the key words (CHOKE, REV, SAG, ATTK; one bit free).
+  Sounds saved by 0.1 or 0.2 load with all of them off; 0.2 reads 0.3's data (only the first 104 bytes).
+
 ## 0.2.1 — 2026-11-18
 
 - COPIED (with the key) and PASTED show for 1.5 s, then clear; COPIED used to stay up for good.
