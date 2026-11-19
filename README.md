@@ -70,7 +70,7 @@ velocity (MIDI, the sequencers, or the keyvel feature) scales it all.
 **SLOPE** moves the pitch hit by hit: a sinker (−) drops each repeat, a riser (+) climbs, up to 24 semitones.
 
 **Copy and paste:** push blue to copy the shown key's settings, play another key, push green: its settings are
-replaced by the copy, all of them, at once. The top of the screen says which key is copied.
+replaced by the copy, all of them, at once. The top of the screen flashes COPIED (with the key) or PASTED.
 
 A setting the key's mode doesn't use is grey with no gauge, and its knob does nothing: COUNT and RATE for ONE (and
 SLOPE, with a single hit), COUNT for HOLD, RATE for FLAM.

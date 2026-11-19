@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 — 2026-11-18
+
+- COPIED (with the key) and PASTED show for 1.5 s, then clear; COPIED used to stay up for good.
+- The trigger guard is smaller and chunkier (bars 7 to 8 px instead of 5) around a bigger trigger, with a sliver
+  open between them.
+- The nuts tumble: a four-frame flip book (face on, at an angle, edge on, at the other angle), each nut about
+  its own axis (sideways or end over end), in its own direction and speed. All one size now, a little bigger, with
+  lighter outlines.
+
 ## 0.2.0 — 2026-11-18
 
 - Firing is more violent: every hit throws the wrench further round (a fifth of its turn, a quarter of its nod),

@@ -254,6 +254,8 @@ static voice_t tv[OP1_VOICES];
 static uint32_t stamp_next = 1;
 static volatile uint8_t sel;                  /* the page shown: the last key played */
 static volatile uint8_t have_clip, clip_key;     /* a key copied (blue push), which one */
+static volatile uint8_t note_kind;               /* the last copy (1) or paste (2), for the screen's brief note */
+static volatile uint32_t note_seq;
 static volatile uint32_t clip;
 
 /* for the screen: every hit (its gain and pitch) into a ring, and how many hits the newest pattern has left */
@@ -483,8 +485,8 @@ static int uz_input(int page, int ev, int a, int b)
                     if (s > 7) s = SRC_AUTO;
                     snd.src = (uint8_t)s; changed = 1; src_force = 1;
                 }
-            } else if (a == 0) { clip = snd.cfg[k]; clip_key = (uint8_t)k; have_clip = 1; }   /* blue: copy this key */
-            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; changed = 1; } }        /* green: paste over it */
+            } else if (a == 0) { clip = snd.cfg[k]; clip_key = (uint8_t)k; have_clip = 1; note_kind = 1; note_seq++; }   /* blue: copy */
+            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; changed = 1; note_kind = 2; note_seq++; } }          /* green: paste */
             else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; changed = 1; }
         }
         if (changed) sound_store(slot);
@@ -662,7 +664,7 @@ static void labels(void *r, const char *const name[4], char txt[4][12], const in
 static uint32_t hash_str(uint32_t h, const char *s) { while (*s) h = (h ^ (uint8_t)*s++) * 16777619u; return (h ^ 0xFF) * 16777619u; }
 
 /* ---- the bolts in flight ---- */
-typedef struct { int32_t x, y, vx, vy, r; int16_t a, va; uint8_t on; } bolt_t;
+typedef struct { int32_t x, y, vx, vy, r; int16_t a, va, tt, tp; uint8_t on, frame, axis; int8_t dir; } bolt_t;   /* tt, tp: ms into the frame, ms a frame */
 static bolt_t bolts[24];
 static uint32_t seen_w, rnd = 1;
 static int32_t recoil, flash;                 /* Q10 px; ms */
@@ -670,33 +672,46 @@ static uint32_t wig_a, wig_b, wig_ta, wig_tb; /* the wiggle's phases and where t
 static int32_t fire_e, shake_x, shake_y;     /* how hard it is firing (Q10, decays), the shake (Q10 px) */
 static volatile int vis_bolts;                /* for the tests */
 static inline int32_t rnd_px(int32_t span) { rnd = rnd * 1664525u + 1013904223u; return (int32_t)((rnd >> 16) % (uint32_t)(2 * span + 1)) - span; }
-/* a cartoon hex nut, tumbling: its back face (thickness, toward the lower right), the lit front face, thick ink,
- * and the threaded hole: dark, with a highlight on its far rim and one turn of thread */
+/* a cartoon hex nut, tumbling as a four-frame flip book: face on, at an angle (its side showing one way), edge on,
+ * at an angle the other way, and round again, about its own axis (sideways or end over end) and in its own direction
+ * and speed, picked as it's fired. A frame: the face squashed across the tumble (Q10) and the thickness showing
+ * beside it (Q10 of the radius, + one way, - the other). Drawn as the back face and the sides, then the lit front
+ * face, ink, and the threaded hole (dark, a lit rim inside; hidden edge on) */
+static const int16_t NUT_FRAME[4][2] = {
+    { 1024,    0 },                           /* face on */
+    {  720,  430 },                           /* at an angle, the side showing */
+    {  170,  600 },                           /* edge on */
+    {  720, -430 },                           /* at an angle, the other side showing */
+};
 static void bolt_draw(void *r, const bolt_t *b)
 {
-    static const uint8_t NUT_LIT[4] = { 0xD8, 0xDC, 0xE2, 0xFF }, NUT_SIDE[4] = { 0x7E, 0x83, 0x8B, 0xFF };
-    const int32_t rr = b->r, ox = rr * 2 / 5, oy = rr * 3 / 10;
+    static const uint8_t NUT_LIT[4] = { 0xDE, 0xE2, 0xE8, 0xFF }, NUT_SIDE[4] = { 0x8C, 0x91, 0x99, 0xFF };
+    const int16_t *v = NUT_FRAME[b->frame & 3];
+    const int32_t rr = b->r, sq = rr * v[0] >> 10, th = rr * v[1] >> 10;
+    const int32_t rx = b->axis ? rr : sq, ry = b->axis ? sq : rr;           /* axis 0: turns sideways, 1: end over end */
+    const int32_t ox = b->axis ? 0 : th, oy = b->axis ? th : 0;
     op1_pt f[6], k[6];
     for (int i = 0; i < 6; i++) {
         const int32_t t = b->a + i * 8192 / 6;
-        f[i].x = b->x + ((rr * tcos(t)) >> 15); f[i].y = b->y + ((rr * tsin(t)) >> 15);
+        f[i].x = b->x + ((rx * tcos(t)) >> 15); f[i].y = b->y + ((ry * tsin(t)) >> 15);
         k[i].x = f[i].x + ox; k[i].y = f[i].y + oy;
     }
-    fill_poly(k, 6, NUT_SIDE);
-    for (int i = 0; i < 6; i++) {                             /* the side between the faces */
-        const op1_pt q[4] = { f[i], f[(i + 1) % 6], k[(i + 1) % 6], k[i] };
-        fill_poly(q, 4, NUT_SIDE);
+    if (th) {
+        fill_poly(k, 6, NUT_SIDE);
+        for (int i = 0; i < 6; i++) {                         /* the sides between the faces */
+            const op1_pt q[4] = { f[i], f[(i + 1) % 6], k[(i + 1) % 6], k[i] };
+            fill_poly(q, 4, NUT_SIDE);
+        }
+        for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &k[j], &k[i], 0x500, COL_INK);   /* the back's edge */
     }
-    for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &k[j], &k[i], 0x900, COL_INK);
     fill_poly(f, 6, NUT_LIT);
-    for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &f[j], &f[i], 0x900, COL_INK);
-    op1_pt h[8];                                               /* the hole */
-    const int32_t hr = rr * 9 / 20;
-    for (int i = 0; i < 8; i++) { const int32_t t = b->a + i * 1024; h[i].x = b->x + ((hr * tcos(t)) >> 15); h[i].y = b->y + ((hr * tsin(t)) >> 15); }
+    for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &f[j], &f[i], 0x500, COL_INK);
+    if (v[0] < 400) return;                                    /* edge on: no hole to see */
+    op1_pt h[8];
+    const int32_t hx = rx * 3 / 8, hy = ry * 3 / 8;
+    for (int i = 0; i < 8; i++) { const int32_t t = b->a + i * 1024; h[i].x = b->x + ((hx * tcos(t)) >> 15); h[i].y = b->y + ((hy * tsin(t)) >> 15); }
     fill_poly(h, 8, COL_INK);
-    for (int i = 5; i < 8; i++) op1_raster_line(r, &h[i], &h[(i + 1) & 7], 0x500, COL_GREY);   /* the lit rim inside */
-    const op1_pt t0 = { b->x - hr / 2, b->y + hr / 4 }, t1 = { b->x + hr / 3, b->y - hr / 3 };
-    op1_raster_line(r, &t0, &t1, 0x400, NUT_SIDE);                                             /* a thread */
+    for (int i = 5; i < 8; i++) op1_raster_line(r, &h[i], &h[(i + 1) & 7], 0x300, COL_GREY);   /* the lit rim inside */
 }
 
 /* ---- the wrench: a small 3D model, drawn as a cartoon ----
@@ -771,10 +786,10 @@ static void lathe_x(int x0, int x1, int cy, int r0, int r1, int sides, int a0, i
 }
 static const int8_t P_HOUSING[] = { 0, -42, 34, -42, 48, -33, 52, -12, 46, 6, 36, 12, 4, 12 };
 static const int8_t P_GRIP[]    = { 2, 8, 36, 8, 52, 66, 16, 70 };
-static const int8_t P_GUARD_T[] = { -30, 10, 4, 10, 4, 14, -28, 14 };          /* the trigger guard: top, */
-static const int8_t P_GUARD_F[] = { -30, 14, -25, 14, -26, 39, -31, 39 };      /* front, */
-static const int8_t P_GUARD_B[] = { -31, 39, 7, 38, 7, 43, -30, 44 };          /* bottom, the gap open */
-static const int8_t P_TRIGGER[] = { -8, 15, -2, 15, -1, 29, -9, 27 };
+static const int8_t P_GUARD_T[] = { -23, 9, 4, 9, 4, 15, -21, 15 };            /* the trigger guard: top, */
+static const int8_t P_GUARD_F[] = { -23, 15, -16, 15, -17, 33, -24, 33 };      /* front, */
+static const int8_t P_GUARD_B[] = { -24, 33, 7, 32, 7, 39, -23, 40 };          /* bottom, a sliver open */
+static const int8_t P_TRIGGER[] = { -11, 15, 0, 15, 1, 30, -12, 28 };
 static const int8_t P_BASE[]    = { 12, 64, 54, 59, 57, 72, 14, 77 };
 static const int8_t P_INLET[]   = { 28, 76, 38, 75, 38, 82, 28, 82 };
 static void mesh_build(void)
@@ -782,9 +797,9 @@ static void mesh_build(void)
     mvn = mfn = min_n = 0;
     prism_z(P_HOUSING, 7, -26, 26, C_RED);
     prism_z(P_GRIP, 4, -19, 19, C_BLACK);
-    prism_z(P_GUARD_T, 4, -6, 6, C_RED);
-    prism_z(P_GUARD_F, 4, -6, 6, C_RED);
-    prism_z(P_GUARD_B, 4, -6, 6, C_RED);
+    prism_z(P_GUARD_T, 4, -5, 5, C_RED);
+    prism_z(P_GUARD_F, 4, -5, 5, C_RED);
+    prism_z(P_GUARD_B, 4, -5, 5, C_RED);
     prism_z(P_TRIGGER, 4, -4, 4, C_GREY);
     prism_z(P_BASE, 4, -21, 21, C_RED);
     prism_z(P_INLET, 4, -5, 5, C_STEEL);
@@ -1112,10 +1127,16 @@ static void uz_screen_update(void *scr, int dt)
         txt[3][n] = 0; name[3] = "SLOPE"; val[3] = fget(c, K_SLOPE) * 32767 / 24;
         if (!field_live(c, K_SLOPE)) { txt[3][0] = '-'; txt[3][1] = 0; val[3] = -1; }
     }
+    /* a copy or a paste shows for 1.5 s */
+    static uint32_t note_seen;
+    static int32_t note_ms;
+    if (note_seq != note_seen) { note_seen = note_seq; note_ms = 1500; }
+    else if (note_ms > 0) note_ms -= dt;
     char title[12], status[16];
     { int n = put_str(title, 0, "KEY "); key_name(title + n, k); }
     if (!look.ok) status[put_str(status, 0, "NO SAMPLE")] = 0;
-    else if (have_clip) { int n = put_str(status, 0, "COPIED "); key_name(status + n, clip_key); }
+    else if (note_ms > 0 && note_kind == 1) { int n = put_str(status, 0, "COPIED "); key_name(status + n, clip_key); }
+    else if (note_ms > 0 && note_kind == 2) status[put_str(status, 0, "PASTED")] = 0;
     else status[0] = 0;
 
     uint32_t lh = 2166136261u;
@@ -1174,8 +1195,13 @@ static void uz_screen_update(void *scr, int dt)
         b->on = 1; b->x = tip.x - PX(4); b->y = tip.y + rnd_px(1024);
         b->vx = -PX(300) + rnd_px(PX(40));
         b->vy = -hv.h * PX(9) + rnd_px(PX(15));
-        b->r = PX(3) + ((PX(4) >> 5) * (hv.g >> 5) >> 5);         /* 3 .. 7 px, by the hit's gain */
-        b->a = (int16_t)rnd_px(4096); b->va = (int16_t)(rnd_px(30) - 40);
+        rnd = rnd * 1664525u + 1013904223u;
+        b->r = PX(6);                                          /* all one size; its own tumble: */
+        b->frame = (uint8_t)(rnd >> 30);                       /* where in it, */
+        b->axis = (uint8_t)((rnd >> 29) & 1);                  /* about which axis, */
+        b->dir = (int8_t)((rnd >> 28) & 1 ? 1 : -1);           /* which way, */
+        b->tp = (int16_t)(35 + ((rnd >> 20) & 31)); b->tt = 0;  /* and how fast: 35 .. 66 ms a frame */
+        b->a = (int16_t)rnd_px(4096); b->va = (int16_t)rnd_px(12);
         recoil = PX(5); flash = 40;
         bang_bg = 250; bang_pop = 90; bang_new();
     }
@@ -1187,6 +1213,8 @@ static void uz_screen_update(void *scr, int dt)
         b->vy += PX(240) * dt / 1000;
         b->y += b->vy * dt / 1000;
         b->a = (int16_t)(b->a + b->va * dt);
+        for (b->tt = (int16_t)(b->tt + dt); b->tt >= b->tp; b->tt = (int16_t)(b->tt - b->tp))   /* the next frame */
+            b->frame = (uint8_t)((b->frame + b->dir) & 3);
         const int32_t m = b->r * 3 / 2 + PX(2);
         if (b->x - m < PX(2) || b->y - m < PX(BAND_Y0 + 1) || b->y + m > PX(BAND_Y1 - 1)) { b->on = 0; continue; }
         nb++;

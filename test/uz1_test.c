@@ -469,6 +469,15 @@ int main(int argc, char **argv)
     CHECK(stored_cfg(0, 2) == clip, "green push pastes it over the shown key, at once, all of it");
     play_key(11); push(OP1_ENG_T1, 1, 0);
     CHECK(stored_cfg(0, 11) == clip && stored_cfg(0, 4) == CFG_DEFAULT, "and again on the next key; keys not pasted on stay as they were");
+    { /* the screen's note: COPIED, then PASTED, each for 1.5 s, then nothing */
+      unsigned h0, h1, h2, h3;
+      push(OP1_ENG_T1, 0, 0); frame("copied"); h0 = text_hash();
+      for (int i = 0; i < 120; i++) frame("copied, later");
+      h1 = text_hash();
+      push(OP1_ENG_T1, 1, 0); frame("pasted"); h2 = text_hash();
+      for (int i = 0; i < 120; i++) frame("pasted, later");
+      h3 = text_hash();
+      CHECK(h0 != h1 && h2 != h1 && h2 != h0 && h3 == h1, "COPIED and PASTED show briefly, then the top is clear again"); }
     push(OP1_ENG_T1, 3, 1);
     CHECK(stored_cfg(0, 11) == CFG_DEFAULT && stored_cfg(0, 2) == clip, "Shift + orange push resets the shown key only");
     CHECK(push(OP1_ENG_T1, 3, 0) == 1 && stored_cfg(0, 11) == CFG_DEFAULT, "orange push without Shift does nothing (but is taken)");
@@ -509,7 +518,13 @@ int main(int argc, char **argv)
     { /* the most violent it gets: a held 1/64 for 3 s, a frame every 16 ms */
       all_keys(kcfg(M_HOLD, 0, 6, 0, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
       reset(); on(0, page_midi(3), 127); int esc3 = 0;
-      for (int i = 0; i < 190; i++) { run_ms(16); frame(i == 40 ? "held 1/64: thrashing" : "held 1/64"); esc3 += band_escapes(); }
+      int flips = 0, ways = 0, axes = 0;
+      for (int i = 0; i < 190; i++) {
+          uint8_t before[24]; for (int j = 0; j < 24; j++) before[j] = bolts[j].frame;
+          run_ms(16); frame(i == 40 ? "held 1/64: thrashing" : "held 1/64"); esc3 += band_escapes();
+          for (int j = 0; j < 24; j++) if (bolts[j].on && bolts[j].frame != before[j]) flips++;
+          for (int j = 0; j < 24; j++) if (bolts[j].on) { ways |= bolts[j].dir > 0 ? 1 : 2; axes |= 1 << bolts[j].axis; } }
+      CHECK(flips > 100 && ways == 3 && axes == 3, "the nuts tumble (%d frame flips), both ways, about both axes", flips);
       off(0); run_ms(300); for (int i = 0; i < 40; i++) frame("calming down");
       CHECK(esc3 == 0, "a held 1/64 for 3 s: the thrashing wrench stays inside its areas (%d out)", esc3);
       CHECK(fire_e == 0, "and it calms down after"); }
