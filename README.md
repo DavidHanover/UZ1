@@ -5,6 +5,8 @@ A hi-hat ratchet for the original Teenage Engineering OP-1 running the
 its own way: rolls, flams, stutters and fills at the OP-1's tempo, with pitch that sinks or rises hit by hit and
 velocity that moves like a drummer's. It is one plugin file, `uz1.knl`, installed through the Hundekraft workshop.
 
+If you enjoy this, throw me a little [bread](https://buymeacoffee.com/davidhanover)!!
+
 ![UZ-1 screen](docs/screen.png)
 
 *Screen preview rendered on a PC; the OP-1's own renderer may differ in detail.*
