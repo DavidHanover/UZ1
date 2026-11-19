@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3 — 2026-11-19
+
+- MODE runs ONE, FLAM, RATCHET, HOLD (it was ONE, RATCHET, HOLD, FLAM). Saved sounds keep their modes.
+
+## 0.3.2 — 2026-11-19
+
+- The play effects stay on the teal panel: the bang's red and yellow outlines, its rays and its stars are cut at the
+  panel's edge and no longer run over the black strips above and below it. The hose still runs where it did.
+
 ## 0.3.1 — 2026-11-18
 
 - RATCHET's COUNT runs 2, 3, 4 … 24, one hit a click (it was 2 to 12, skipping). It has its own byte per key in the

@@ -52,7 +52,7 @@ Where the project stands and what to know before changing it. The plan it was bu
   frame, back faces culled, painter-sorted by depth, cel-shaded with ink on the silhouette and hard edges (`mnb`,
   `mcrease`, worked out once). `backdrop()` fills the band teal every frame (4 px in at the top and bottom); while firing it adds the
   red burst's inside, filled black (cut to the teal panel by `fill_clipped`), two 24-point burst outlines bigger than
-  the moving areas, 16 rays and 4 stars, the lines cut to `DYN` by `cline()`. The burst
+  the moving areas, 16 rays and 4 stars, the lines cut to the teal panel by `tline()` (from 0.3.2; `cline()`, to `DYN`, is the hose's). The burst
   shows from the first hit to 250 ms after the last, so fast rates don't strobe; it pops per hit. The hose (`hose()`)
   runs from the inlet into a loop-the-loop halfway to the screen's edge, then snakes up in an S (a Catmull-Rom
   curve through `SNAKE`) and off the right, also through `cline()`. If the GUI frame load is high on

@@ -74,7 +74,7 @@ static const uint8_t RATE_DEN[8] = { 2, 3, 4, 6, 8, 12, 16, 24 };       /* beats
 static const char *const RATE_TXT[8] = { "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64", "1/64T" };
 static const char *const MODE_TXT[M_N] = { "HOLD", "RATCHET", "FLAM", "ONE" };
 /* the MODE knob's order (the saved values stay as the enum): ONE, the default, first */
-static const uint8_t MODE_ORDER[M_N] = { M_ONE, M_RATCHET, M_HOLD, M_FLAM };
+static const uint8_t MODE_ORDER[M_N] = { M_ONE, M_FLAM, M_RATCHET, M_HOLD };
 static inline int mode_pos(int m) { for (int i = 0; i < M_N; i++) if (MODE_ORDER[i] == m) return i; return 0; }
 /* whether a setting does anything in the key's mode: COUNT is the count (RATCHET) or the gap (FLAM); RATE spaces the
  * hits of RATCHET and HOLD; SLOPE needs more than one hit. The others always count. A setting that doesn't is shown
@@ -999,12 +999,13 @@ static void bang_new(void)
     for (int i = 0; i < BANG_N; i++) bang_jit[i] = (uint8_t)(rnd_px(40) + 40);     /* 0 .. 80 */
     for (int i = 0; i < 4; i++) { bang_star[i][0] = (uint8_t)(rnd_px(8) + 24 + (i & 1) * 266); bang_star[i][1] = (uint8_t)(rnd_px(5) + (i & 2 ? 88 : 40)); bang_star[i][2] = (uint8_t)rnd_px(100); }
 }
-/* a line cut to the moving areas (the band, and the column under it), w wide (Q10) */
-static void cline(void *r, op1_pt a, op1_pt b, int32_t w, const uint8_t *c)
+#define TEAL_Y0   (BAND_Y0 + 4)               /* the teal panel: the band, 4 px in at the top and bottom */
+#define TEAL_Y1   (BAND_Y1 - 4)
+/* a line cut to rectangles (px), its whole stroke (w wide, Q10) inside them */
+static void clip_line(void *r, op1_pt a, op1_pt b, int32_t w, const uint8_t *c, const int16_t (*RC)[4], int nr)
 {
-    static const int16_t RC[2][4] = { { 0, BAND_Y0, 319, BAND_Y1 }, { COL_X0, BAND_Y0, COL_X1, SCR_Y1 } };
     const int32_t m = w / 2 + 128;
-    for (int k = 0; k < 2; k++) {
+    for (int k = 0; k < nr; k++) {
         const int32_t x0 = PX(RC[k][0]) + m, y0 = PX(RC[k][1]) + m, x1 = PX(RC[k][2]) - m, y1 = PX(RC[k][3]) - m;
         const int64_t dx = b.x - a.x, dy = b.y - a.y;
         int64_t t0 = 0, t1 = 65536;                            /* Liang-Barsky, Q16 */
@@ -1022,6 +1023,19 @@ static void cline(void *r, op1_pt a, op1_pt b, int32_t w, const uint8_t *c)
         op1_raster_line(r, &p0, &p1, w, c);
     }
 }
+/* a line cut to the moving areas (the band, and the column under it): the hose */
+static void cline(void *r, op1_pt a, op1_pt b, int32_t w, const uint8_t *c)
+{
+    static const int16_t RC[2][4] = { { 0, BAND_Y0, 319, BAND_Y1 }, { COL_X0, BAND_Y0, COL_X1, SCR_Y1 } };
+    clip_line(r, a, b, w, c, RC, 2);
+}
+/* a line cut to the teal panel: the play effects (the bang's outlines, its rays and stars) stay on it, clear of the
+ * black strips above and below it */
+static void tline(void *r, op1_pt a, op1_pt b, int32_t w, const uint8_t *c)
+{
+    static const int16_t RC[1][4] = { { 0, TEAL_Y0, 319, TEAL_Y1 } };
+    clip_line(r, a, b, w, c, RC, 1);
+}
 static void star(void *r, int32_t x, int32_t y, int32_t rr, int32_t a)
 {
     op1_pt q[10];
@@ -1029,7 +1043,7 @@ static void star(void *r, int32_t x, int32_t y, int32_t rr, int32_t a)
         const int32_t t = a + i * 819 - 2048, l = i & 1 ? rr * 2 / 5 : rr;
         q[i].x = x + ((l * tcos(t)) >> 15); q[i].y = y + ((l * tsin(t)) >> 15);
     }
-    for (int i = 0, j = 9; i < 10; j = i++) cline(r, q[j], q[i], 0x700, COL_YEL);
+    for (int i = 0, j = 9; i < 10; j = i++) tline(r, q[j], q[i], 0x700, COL_YEL);
 }
 /* the burst: spikes and notches in turn, on an ellipse rx x ry (Q10) around (cx, cy), scaled by k Q10 */
 static void burst(op1_pt *q, int32_t cx, int32_t cy, int32_t rx, int32_t ry, int32_t k, int32_t inner)
@@ -1068,8 +1082,6 @@ static void fill_clipped(const op1_pt *p, int n, int32_t x0, int32_t y0, int32_t
     if (m >= 3) fill_poly(b, m, c);
 }
 #define BANG_RX 150                           /* around the whole wrench, nose to grip */
-#define TEAL_Y0   (BAND_Y0 + 4)               /* the teal panel: the band, 4 px in at the top and bottom */
-#define TEAL_Y1   (BAND_Y1 - 4)
 #define BANG_RY 80
 static void backdrop(void *r, int32_t gunx)
 {
@@ -1082,7 +1094,7 @@ static void backdrop(void *r, int32_t gunx)
         const int32_t a = i * 512 + 256, ca = tcos(a), sa = tsin(a);
         const op1_pt o = { cx + (int32_t)((int64_t)PX(BANG_RX) * 17 / 16 * ca >> 15), cy + (int32_t)((int64_t)PX(BANG_RY) * 17 / 16 * sa >> 15) };
         const op1_pt e = { cx + (int32_t)((int64_t)PX(420) * ca >> 15), cy + (int32_t)((int64_t)PX(420) * sa >> 15) };
-        cline(r, o, e, 0x700, i & 1 ? COL_TEAL_L : COL_YEL);
+        tline(r, o, e, 0x700, i & 1 ? COL_TEAL_L : COL_YEL);
     }
     for (int i = 0; i < 4; i++) star(r, PX(bang_star[i][0]), PX(bang_star[i][1]), PX(4) + (bang_star[i][2] & 3) * 500, bang_star[i][2] * 40);
     op1_pt q[BANG_N];
@@ -1090,8 +1102,8 @@ static void backdrop(void *r, int32_t gunx)
     burst(y, cx, cy, PX(BANG_RX), PX(BANG_RY), k * 12 / 16, 680);          /* yellow, inside */
     burst(q, cx, cy, PX(BANG_RX), PX(BANG_RY), k, 640);                    /* red, outside: all of it filled black */
     fill_clipped(q, BANG_N, 1, PX(TEAL_Y0), PX(319) - 1, PX(TEAL_Y1), COL_INK);
-    for (int i = 0, j = BANG_N - 1; i < BANG_N; j = i++) cline(r, q[j], q[i], 0xC00, COL_BANG_R);
-    for (int i = 0, j = BANG_N - 1; i < BANG_N; j = i++) cline(r, y[j], y[i], 0xC00, COL_YEL);
+    for (int i = 0, j = BANG_N - 1; i < BANG_N; j = i++) tline(r, q[j], q[i], 0xC00, COL_BANG_R);
+    for (int i = 0, j = BANG_N - 1; i < BANG_N; j = i++) tline(r, y[j], y[i], 0xC00, COL_YEL);
 }
 /* the air hose: from the inlet under the grip, along to the right, once round a loop-the-loop halfway, and off the
  * right of the screen */

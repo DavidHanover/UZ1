@@ -207,6 +207,22 @@ static int band_escapes(void)
     }
     return bad;
 }
+/* the play effects (the bang's outlines, rays and stars: yellow, red, light teal) with any of their stroke off the teal
+ * panel, into the black strips above and below it */
+static int fx_off_panel(void)
+{
+    int bad = 0;
+    for (int i = dyn_from; i < nops; i++) {
+        if (ops[i] < 0) continue;
+        const hline *l = &lines[ops[i]];
+        const int fx = (l->c[0] == COL_YEL[0] && l->c[1] == COL_YEL[1]) || (l->c[0] == COL_BANG_R[0] && l->c[1] == COL_BANG_R[1])
+                    || (l->c[0] == COL_TEAL_L[0] && l->c[1] == COL_TEAL_L[1]);
+        if (!fx) continue;
+        const int32_t lo = (l->y0 < l->y1 ? l->y0 : l->y1) - l->w / 2, hi = (l->y0 > l->y1 ? l->y0 : l->y1) + l->w / 2;
+        if (lo < PX(TEAL_Y0) - 64 || hi > PX(TEAL_Y1) + 64) bad++;
+    }
+    return bad;
+}
 /* text strokes (1 px lines) per corner, and any outside the label areas, title and status rows */
 static void text_scan(int *cnt, int cor[4], int *bad)
 {
@@ -485,15 +501,17 @@ int main(int argc, char **argv)
     play_key(7);
     CHECK(sel == 7, "playing a key shows its page");
     CHECK(fget(snd.cfg[7], K_MODE) == M_ONE, "a new key is a plain one-shot (ONE)");
-    CHECK(turn(OP1_ENG_T1, 0, 1, 0) == 1 && fget(stored_cfg(0, 7), K_MODE) == M_RATCHET, "blue: MODE, one click on from ONE is RATCHET, stored with the sound");
+    CHECK(turn(OP1_ENG_T1, 0, 1, 0) == 1 && fget(stored_cfg(0, 7), K_MODE) == M_FLAM, "blue: MODE, one click on from ONE is FLAM, stored with the sound");
+    turn(OP1_ENG_T1, 0, 1, 0);
+    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_RATCHET, "then RATCHET");
     turn(OP1_ENG_T1, 0, 9, 0);
-    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_FLAM, "MODE runs ONE, RATCHET, HOLD, FLAM, and stops there");
+    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_HOLD, "MODE runs ONE, FLAM, RATCHET, HOLD, and stops there");
     turn(OP1_ENG_T1, 0, -9, 0);
     CHECK(fget(stored_cfg(0, 7), K_MODE) == M_ONE, "and back to ONE");
     uint32_t c7 = stored_cfg(0, 7);
     turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, -5, 1);
     CHECK(stored_cfg(0, 7) == c7, "ONE: COUNT, RATE and SLOPE do nothing (one hit), their knobs change nothing");
-    turn(OP1_ENG_T1, 0, 1, 0);
+    turn(OP1_ENG_T1, 0, 2, 0);                                                     /* RATCHET */
     turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, 30, 0);
     c7 = stored_cfg(0, 7);
     CHECK(host_eng_data[0][DATA_CNT + 7] == 7 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "RATCHET: green COUNT (4 + 3: one a click), white RATE, orange PITCH (clamped at +12)");
@@ -530,12 +548,12 @@ int main(int argc, char **argv)
     CHECK(fget(c7, K_MODE) == M_HOLD && stored_cfg(0, 7) == c7, "HOLD: COUNT does nothing (it repeats while held)");
     turn(OP1_ENG_T1, 2, 1, 0);
     CHECK(fget(stored_cfg(0, 7), K_RATE) == 3, "HOLD: RATE does");
-    turn(OP1_ENG_T1, 0, 1, 0); c7 = stored_cfg(0, 7);                           /* FLAM */
+    turn(OP1_ENG_T1, 0, -2, 0); c7 = stored_cfg(0, 7);                          /* FLAM, two back */
     turn(OP1_ENG_T1, 2, 2, 0);
     CHECK(fget(c7, K_MODE) == M_FLAM && stored_cfg(0, 7) == c7, "FLAM: RATE does nothing");
     turn(OP1_ENG_T1, 1, -1, 0);
     CHECK(fget(stored_cfg(0, 7), K_COUNT) == 1 && host_eng_data[0][DATA_CNT + 7] == 7, "FLAM: COUNT sets the gap (RATCHET's count kept)");
-    turn(OP1_ENG_T1, 0, -2, 0);
+    turn(OP1_ENG_T1, 0, 1, 0);                                                     /* RATCHET again */
     CHECK(stored_cfg(0, 6) == CFG_DEFAULT && stored_cfg(0, 8) == CFG_DEFAULT, "the other keys are untouched");
     have_clip = 0; play_key(9); const uint32_t c9 = stored_cfg(0, 9);
     CHECK(push(OP1_ENG_T1, 1, 0) == 1 && stored_cfg(0, 9) == c9, "green push with nothing copied does nothing");
@@ -602,7 +620,9 @@ int main(int argc, char **argv)
     CHECK(!bad, "text stays in its rows, out of the moving band (%d strokes out)", bad);
     int escapes = 0, most = 0, frames_n = 0;
     int banged = 0;
-    for (int i = 0; i < 40; i++) { run_ms(16); frame(i == 6 ? "ratchet firing" : i == 14 ? "bolts in flight" : "firing"); escapes += band_escapes(); if (vis_bolts > most) most = vis_bolts; banged += vis_bang; frames_n++; }
+    int fx_off = 0;
+    for (int i = 0; i < 40; i++) { run_ms(16); frame(i == 6 ? "ratchet firing" : i == 14 ? "bolts in flight" : "firing"); escapes += band_escapes(); fx_off += fx_off_panel(); if (vis_bolts > most) most = vis_bolts; banged += vis_bang; frames_n++; }
+    CHECK(fx_off == 0, "the bang, its rays and stars stay on the teal panel, clear of the black strips (%d strokes over)", fx_off);
     CHECK(most >= 4, "every hit fires a bolt (up to %d in the air)", most);
     CHECK(banged >= 8, "the comic bang flashes while it fires (%d frames)", banged);
     { const uint32_t a0 = wig_a; frame("idle turn"); const uint32_t idle = wig_a - a0;
@@ -633,7 +653,11 @@ int main(int argc, char **argv)
       for (int j = 0; j < dyn_from; j++) { if (lines[j].w == 1024) { grey_txt += lines[j].c[0] == COL_GREY[0] && lines[j].c[1] == COL_GREY[1]; continue; }
           if (lines[j].y0 == lines[j].y1 && lines[j].y0 == OP1_Q10(19) && lines[j].x0 > OP1_Q10(216)) gauge_r++;
           if (lines[j].y0 == lines[j].y1 && lines[j].y0 == OP1_Q10(LBL_Y1 + 11) && lines[j].x0 < OP1_Q10(104)) gauge_w++; }
-      CHECK(gauge_r == 0 && gauge_w == 0 && grey_txt > 10, "a one-shot page: COUNT and RATE grey, with no gauge (%d, %d gauge lines)", gauge_r, gauge_w); }
+      CHECK(gauge_r == 0 && gauge_w == 0 && grey_txt > 10, "a one-shot page: COUNT and RATE grey, with no gauge (%d, %d gauge lines)", gauge_r, gauge_w);
+      /* one hit, frame by frame, for a still of its nut in flight */
+      for (int i = 0; i < 80; i++) frame("one-shot page, settling");
+      reset(); on(0, page_midi(3), 127); run_blocks(1); off(0);
+      for (int i = 0; i < 40; i++) { frame("one hit"); if (getenv("UZ_NUT")) for (int j = 0; j < 24; j++) if (bolts[j].on) printf("one hit %d: nut x %.1f y %.1f\n", i, bolts[j].x / 1024.0, bolts[j].y / 1024.0); } }
     all_keys(CFG_DEFAULT); C24[3] = kcfg(M_RATCHET, 3, 4, 0, -2, V_ALT, 5, 15, 15); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
     { choke_key(0, 3, 1); play_key(3); frame("choke key");
       int orange = 0, bad_c; int cor_c[4], txt_c; text_scan(&txt_c, cor_c, &bad_c);
