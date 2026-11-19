@@ -5,8 +5,8 @@
  * are spaced by the OP-1 tempo.
  *
  *   T1     turn                          Shift + turn                  push
- *   blue   MODE: hold ratchet flam one   VEL: flat, alt, human, ramp   copy this key
- *   green  COUNT (flam: GAP)             LEVEL                         paste mode (Shift: paste to all keys)
+ *   blue   MODE: one ratchet hold flam   VEL: flat, alt, human, ramp   copy this key
+ *   green  COUNT (flam: GAP)             LEVEL                         paste the copy over this key
  *   white  RATE: 1/8 .. 1/64T            GATE                          -
  *   orange PITCH +-12                    SLOPE: pitch per hit +-6      Shift: reset this key
  *
@@ -19,6 +19,8 @@
  * Pages follow the OP-1's 24 physical keys (F1 .. E2 from the left, whatever the octave), read at key-down from the
  * core's key velocity hook (see key_page). Notes that don't come from the keys (MIDI, the sequencers) pick their page
  * by pitch: MIDI note - 53, mod 24, the same pages at octave 0. The key's pitch never transposes the sample.
+ *
+ * A setting a key's mode doesn't use (COUNT and RATE for ONE, ...) is shown grey with no gauge; its knob does nothing.
  *
  * Saved with the sound (op1_engine_data, 104 bytes): a version byte, the globals, then 4 bytes a key.
  * Copyright (C) 2026 David Hanover. GPL-3.0-or-later with the OP-1 firmware permission (see LICENSE and NOTICE).
@@ -59,6 +61,20 @@ static const uint8_t FLAM_MS[8]  = { 10, 15, 20, 25, 30, 40, 50, 60 };
 static const uint8_t RATE_DEN[8] = { 2, 3, 4, 6, 8, 12, 16, 24 };       /* beats / den: 1/8 1/8T 1/16 1/16T .. 1/64T */
 static const char *const RATE_TXT[8] = { "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64", "1/64T" };
 static const char *const MODE_TXT[M_N] = { "HOLD", "RATCHET", "FLAM", "ONE" };
+/* the MODE knob's order (the saved values stay as the enum): ONE, the default, first */
+static const uint8_t MODE_ORDER[M_N] = { M_ONE, M_RATCHET, M_HOLD, M_FLAM };
+static inline int mode_pos(int m) { for (int i = 0; i < M_N; i++) if (MODE_ORDER[i] == m) return i; return 0; }
+/* whether a setting does anything in the key's mode: COUNT is the count (RATCHET) or the gap (FLAM); RATE spaces the
+ * hits of RATCHET and HOLD; SLOPE needs more than one hit. The others always count. A setting that doesn't is shown
+ * grey with no gauge, and its knob does nothing */
+static inline int field_live(uint32_t c, int f)
+{
+    const int m = (int)(c & 3);
+    if (f == K_COUNT) return m == M_RATCHET || m == M_FLAM;
+    if (f == K_RATE) return m == M_RATCHET || m == M_HOLD;
+    if (f == K_SLOPE) return m != M_ONE;
+    return 1;
+}
 static const char *const NOTE_TXT[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
 /* 2^(i/96), Q30: eighth-semitone steps of an octave */
@@ -237,7 +253,7 @@ typedef struct {
 static voice_t tv[OP1_VOICES];
 static uint32_t stamp_next = 1;
 static volatile uint8_t sel;                  /* the page shown: the last key played */
-static volatile uint8_t paste_mode, have_clip;
+static volatile uint8_t have_clip, clip_key;     /* a key copied (blue push), which one */
 static volatile uint32_t clip;
 
 /* for the screen: every hit (its gain and pitch) into a ring, and how many hits the newest pattern has left */
@@ -308,7 +324,6 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
     if (page < 0) { page = (midi_of(inc) - PAGE_BASE) % 24; if (page < 0) page += 24; }
     t->key = (uint8_t)page;
     sel = (uint8_t)page;
-    if (paste_mode && have_clip) { snd.cfg[page] = clip; snd_dirty = 1; }
     const uint32_t c = snd.cfg[page];
     t->cfg = c;
     t->mode = (uint8_t)fget(c, K_MODE);
@@ -468,11 +483,9 @@ static int uz_input(int page, int ev, int a, int b)
                     if (s > 7) s = SRC_AUTO;
                     snd.src = (uint8_t)s; changed = 1; src_force = 1;
                 }
-            } else if (a == 0) { clip = snd.cfg[k]; have_clip = 1; paste_mode = 0; }
-            else if (a == 1) {
-                if (shift) { if (have_clip) { for (int i = 0; i < 24; i++) snd.cfg[i] = clip; changed = 1; } paste_mode = 0; }
-                else paste_mode = paste_mode ? 0 : have_clip;
-            } else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; changed = 1; }
+            } else if (a == 0) { clip = snd.cfg[k]; clip_key = (uint8_t)k; have_clip = 1; }   /* blue: copy this key */
+            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; changed = 1; } }        /* green: paste over it */
+            else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; changed = 1; }
         }
         if (changed) sound_store(slot);
         return 1;
@@ -490,7 +503,9 @@ static int uz_input(int page, int ev, int a, int b)
             uint32_t c = snd.cfg[k];
             static const int8_t PLAIN[4] = { K_MODE, K_COUNT, K_RATE, K_PITCH }, SHIFTED[4] = { K_VEL, K_LEVEL, K_GATE, K_SLOPE };
             const int f = shift ? SHIFTED[a] : PLAIN[a];
+            if (!field_live(c, f)) return 1;                  /* nothing to set in this mode */
             if (f == K_VEL) c = vel_set(c, clampi(vel_pos(c) + dd, 0, 30));
+            else if (f == K_MODE) c = fset(c, f, MODE_ORDER[clampi(mode_pos(fget(c, f)) + dd, 0, M_N - 1)]);
             else c = fset(c, f, clampi(fget(c, f) + dd, 0, FLD[f].max));
             snd.cfg[k] = c;
         }
@@ -537,6 +552,7 @@ static const uint8_t COL_METAL[4]  = { 0x9A, 0x9E, 0xA3, 0xFF };
 static const uint8_t COL_STEEL[4]  = { 0x55, 0x59, 0x5E, 0xFF };
 static const uint8_t COL_SILVER[4] = { 0xD4, 0xD8, 0xDC, 0xFF };
 static const uint8_t COL_FLASH[4]  = { 0xFF, 0xE0, 0x6A, 0xFF };
+static const uint8_t COL_INK[4]    = { 0x0E, 0x0F, 0x14, 0xFF };
 
 static inline int32_t tsin(int32_t a) { return OP1_SINE_TABLE[a & 8191]; }
 static inline int32_t tcos(int32_t a) { return tsin(a + 2048); }
@@ -605,17 +621,6 @@ static void fill_poly(const op1_pt *p, int n, const uint8_t *rgba)
         }
     }
 }
-/* an n-gon of radius rr (Q10) around (x, y), turned by a (8192 a turn) */
-static void ngon(void *r, int32_t x, int32_t y, int32_t rr, int n, int32_t a, const uint8_t *fill, const uint8_t *edge)
-{
-    op1_pt p[12];
-    for (int i = 0; i < n; i++) {
-        const int32_t t = a + i * 8192 / n;
-        p[i].x = x + ((rr * tcos(t)) >> 15); p[i].y = y + ((rr * tsin(t)) >> 15);
-    }
-    if (fill) fill_poly(p, n, fill);
-    if (edge) for (int i = 0, j = n - 1; i < n; j = i++) ln(r, p[j].x, p[j].y, p[i].x, p[i].y, edge);
-}
 
 /* ---- text ---- */
 static int put_num(char *t, int n, int32_t v, int sign)
@@ -639,14 +644,17 @@ static void key_name(char *t, int page)
     int n = put_str(t, 0, NOTE_TXT[(PAGE_BASE + page) % 12]);
     t[n++] = page < 12 ? '1' : '2'; t[n] = 0;
 }
-/* one block a corner (blue, green on top; white, orange below): name, value, a gauge (0..32767) */
+/* one block a corner (blue, green on top; white, orange below): name, value, a gauge (0..32767). val < 0: the
+ * setting does nothing in this mode: grey, no gauge */
 static void labels(void *r, const char *const name[4], char txt[4][12], const int32_t val[4])
 {
     for (int i = 0; i < 4; i++) {
         const int32_t x0 = PX(i & 1 ? 312 - LBL_W : 8), y = PX(i < 2 ? 8 : LBL_Y1);
+        const uint8_t *c = val[i] < 0 ? COL_GREY : COL_KNOB[i];
+        sq_text(r, x0, y, LBL_S, name[i], 1024, c);
+        sq_text(r, x0 + PX(LBL_W) - sq_width(LBL_S, txt[i]) + PX(2), y, LBL_S, txt[i], 1024, c);
+        if (val[i] < 0) continue;
         const int32_t len = (PX(LBL_W) >> 5) * (val[i] >> 5) >> 5;
-        sq_text(r, x0, y, LBL_S, name[i], 1024, COL_KNOB[i]);
-        sq_text(r, x0 + PX(LBL_W) - sq_width(LBL_S, txt[i]) + PX(2), y, LBL_S, txt[i], 1024, COL_KNOB[i]);
         ln(r, x0, y + PX(11), x0 + PX(LBL_W), y + PX(11), COL_GREY);
         if (len > 512) ln(r, x0, y + PX(11), x0 + len, y + PX(11), COL_KNOB[i]);
     }
@@ -659,19 +667,36 @@ static bolt_t bolts[24];
 static uint32_t seen_w, rnd = 1;
 static int32_t recoil, flash;                 /* Q10 px; ms */
 static uint32_t wig_a, wig_b, wig_ta, wig_tb; /* the wiggle's phases and where they are headed, 8192 a turn << 10 */
+static int32_t fire_e, shake_x, shake_y;     /* how hard it is firing (Q10, decays), the shake (Q10 px) */
 static volatile int vis_bolts;                /* for the tests */
 static inline int32_t rnd_px(int32_t span) { rnd = rnd * 1664525u + 1013904223u; return (int32_t)((rnd >> 16) % (uint32_t)(2 * span + 1)) - span; }
+/* a cartoon hex nut, tumbling: its back face (thickness, toward the lower right), the lit front face, thick ink,
+ * and the threaded hole: dark, with a highlight on its far rim and one turn of thread */
 static void bolt_draw(void *r, const bolt_t *b)
 {
-    ngon(r, b->x, b->y, b->r, 6, b->a, COL_STEEL, COL_SILVER);
-    const int32_t ax = tcos(b->a + 1365), ay = tsin(b->a + 1365);                 /* the shank, off one flat */
-    const int32_t ex = b->x - ((b->r * 5 / 2 * ax) >> 15), ey = b->y - ((b->r * 5 / 2 * ay) >> 15);
-    ln(r, b->x - ((b->r * ax) >> 15), b->y - ((b->r * ay) >> 15), ex, ey, COL_SILVER);
-    for (int i = 1; i <= 3; i++) {                                                  /* the thread */
-        const int32_t cx = b->x - ((b->r * (2 + i * 3) / 4 * ax) >> 15), cy = b->y - ((b->r * (2 + i * 3) / 4 * ay) >> 15);
-        const int32_t tx = (b->r * 2 / 5 * -ay) >> 15, ty = (b->r * 2 / 5 * ax) >> 15;
-        ln(r, cx - tx, cy - ty, cx + tx, cy + ty, COL_GREY);
+    static const uint8_t NUT_LIT[4] = { 0xD8, 0xDC, 0xE2, 0xFF }, NUT_SIDE[4] = { 0x7E, 0x83, 0x8B, 0xFF };
+    const int32_t rr = b->r, ox = rr * 2 / 5, oy = rr * 3 / 10;
+    op1_pt f[6], k[6];
+    for (int i = 0; i < 6; i++) {
+        const int32_t t = b->a + i * 8192 / 6;
+        f[i].x = b->x + ((rr * tcos(t)) >> 15); f[i].y = b->y + ((rr * tsin(t)) >> 15);
+        k[i].x = f[i].x + ox; k[i].y = f[i].y + oy;
     }
+    fill_poly(k, 6, NUT_SIDE);
+    for (int i = 0; i < 6; i++) {                             /* the side between the faces */
+        const op1_pt q[4] = { f[i], f[(i + 1) % 6], k[(i + 1) % 6], k[i] };
+        fill_poly(q, 4, NUT_SIDE);
+    }
+    for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &k[j], &k[i], 0x900, COL_INK);
+    fill_poly(f, 6, NUT_LIT);
+    for (int i = 0, j = 5; i < 6; j = i++) op1_raster_line(r, &f[j], &f[i], 0x900, COL_INK);
+    op1_pt h[8];                                               /* the hole */
+    const int32_t hr = rr * 9 / 20;
+    for (int i = 0; i < 8; i++) { const int32_t t = b->a + i * 1024; h[i].x = b->x + ((hr * tcos(t)) >> 15); h[i].y = b->y + ((hr * tsin(t)) >> 15); }
+    fill_poly(h, 8, COL_INK);
+    for (int i = 5; i < 8; i++) op1_raster_line(r, &h[i], &h[(i + 1) & 7], 0x500, COL_GREY);   /* the lit rim inside */
+    const op1_pt t0 = { b->x - hr / 2, b->y + hr / 4 }, t1 = { b->x + hr / 3, b->y - hr / 3 };
+    op1_raster_line(r, &t0, &t1, 0x400, NUT_SIDE);                                             /* a thread */
 }
 
 /* ---- the wrench: a small 3D model, drawn as a cartoon ----
@@ -682,10 +707,9 @@ static void bolt_draw(void *r, const bolt_t *b)
  * edges only, so the round parts read smooth. Model units: px, x right, y down, z toward the viewer; stored px * 16. */
 enum { C_RED, C_BLACK, C_GREY, C_STEEL, C_N };
 static const uint8_t PAL[C_N][3] = { { 0xE8, 0x2A, 0x2A }, { 0x40, 0x43, 0x4A }, { 0x9A, 0x9E, 0xA6 }, { 0xC4, 0xC8, 0xCE } };
-static const uint8_t COL_INK[4] = { 0x0E, 0x0F, 0x14, 0xFF };
-#define MV 160
-#define MF 72
-#define MI 560
+#define MV 200
+#define MF 96
+#define MI 720
 typedef struct { int16_t x, y, z; } v3_t;
 typedef struct { uint16_t i0; uint8_t n, col; int16_t nx, ny, nz; } face_t;   /* normal Q12 */
 static v3_t mv[MV];
@@ -694,9 +718,10 @@ static uint16_t mi[MI];
 static uint8_t mnb[MI], mcrease[MI];          /* per face edge (from vertex i to i + 1): the face across, a hard edge */
 static int mvn, mfn, min_n, mesh_ok;
 static int32_t isqrt32(uint32_t v) { uint32_t r = 0, b = 1u << 30; while (b > v) b >>= 2; while (b) { if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1; b >>= 2; } return (int32_t)r; }
-static int vadd(int32_t x, int32_t y, int32_t z) { mv[mvn].x = (int16_t)x; mv[mvn].y = (int16_t)y; mv[mvn].z = (int16_t)z; return mvn++; }
+static int vadd(int32_t x, int32_t y, int32_t z) { if (mvn >= MV) return MV - 1; mv[mvn].x = (int16_t)x; mv[mvn].y = (int16_t)y; mv[mvn].z = (int16_t)z; return mvn++; }
 static void fadd(int col, int n, const int *idx, int32_t nx, int32_t ny, int32_t nz)
 {
+    if (mfn >= MF || min_n + n > MI) return;                  /* the tables are sized for the model: never reached */
     const int32_t l = isqrt32((uint32_t)(nx * nx + ny * ny + nz * nz));
     face_t *f = &mf[mfn++];
     f->i0 = (uint16_t)min_n; f->n = (uint8_t)n; f->col = (uint8_t)col;
@@ -746,8 +771,10 @@ static void lathe_x(int x0, int x1, int cy, int r0, int r1, int sides, int a0, i
 }
 static const int8_t P_HOUSING[] = { 0, -42, 34, -42, 48, -33, 52, -12, 46, 6, 36, 12, 4, 12 };
 static const int8_t P_GRIP[]    = { 2, 8, 36, 8, 52, 66, 16, 70 };
-static const int8_t P_GUARD[]   = { -14, 10, 4, 10, 4, 15, -8, 15, -10, 31, 6, 35, 6, 40, -16, 36 };
-static const int8_t P_TRIGGER[] = { -6, 17, 4, 17, 6, 32, -7, 29 };
+static const int8_t P_GUARD_T[] = { -30, 10, 4, 10, 4, 14, -28, 14 };          /* the trigger guard: top, */
+static const int8_t P_GUARD_F[] = { -30, 14, -25, 14, -26, 39, -31, 39 };      /* front, */
+static const int8_t P_GUARD_B[] = { -31, 39, 7, 38, 7, 43, -30, 44 };          /* bottom, the gap open */
+static const int8_t P_TRIGGER[] = { -8, 15, -2, 15, -1, 29, -9, 27 };
 static const int8_t P_BASE[]    = { 12, 64, 54, 59, 57, 72, 14, 77 };
 static const int8_t P_INLET[]   = { 28, 76, 38, 75, 38, 82, 28, 82 };
 static void mesh_build(void)
@@ -755,8 +782,10 @@ static void mesh_build(void)
     mvn = mfn = min_n = 0;
     prism_z(P_HOUSING, 7, -26, 26, C_RED);
     prism_z(P_GRIP, 4, -19, 19, C_BLACK);
-    prism_z(P_GUARD, 8, -8, 8, C_RED);
-    prism_z(P_TRIGGER, 4, -6, 6, C_GREY);
+    prism_z(P_GUARD_T, 4, -6, 6, C_RED);
+    prism_z(P_GUARD_F, 4, -6, 6, C_RED);
+    prism_z(P_GUARD_B, 4, -6, 6, C_RED);
+    prism_z(P_TRIGGER, 4, -4, 4, C_GREY);
     prism_z(P_BASE, 4, -21, 21, C_RED);
     prism_z(P_INLET, 4, -5, 5, C_STEEL);
     lathe_x(-50, -2, -15, 19, 28, 8, 512, C_BLACK);           /* the hammer case */
@@ -1055,13 +1084,13 @@ static void uz_screen_update(void *scr, int dt)
     int32_t val[4];
     if (!shift) {
         name[0] = "MODE"; txt[0][put_str(txt[0], 0, MODE_TXT[mode])] = 0;
-        val[0] = mode * 32767 / 3;
+        val[0] = mode_pos(mode) * 32767 / 3;
         if (mode == M_RATCHET) { name[1] = "COUNT"; txt[1][put_num(txt[1], 0, COUNTS[fget(c, K_COUNT)], 0)] = 0; }
         else if (mode == M_FLAM) { name[1] = "GAP"; txt[1][put_ms(txt[1], 0, FLAM_MS[fget(c, K_COUNT)])] = 0; }
         else { name[1] = "COUNT"; txt[1][put_str(txt[1], 0, mode == M_HOLD ? "HELD" : "1")] = 0; }
-        val[1] = fget(c, K_COUNT) * 32767 / 7;
-        name[2] = "RATE"; txt[2][put_str(txt[2], 0, mode == M_FLAM || mode == M_ONE ? "-" : RATE_TXT[fget(c, K_RATE)])] = 0;
-        val[2] = fget(c, K_RATE) * 32767 / 7;
+        val[1] = field_live(c, K_COUNT) ? fget(c, K_COUNT) * 32767 / 7 : -1;
+        name[2] = "RATE"; txt[2][put_str(txt[2], 0, field_live(c, K_RATE) ? RATE_TXT[fget(c, K_RATE)] : "-")] = 0;
+        val[2] = field_live(c, K_RATE) ? fget(c, K_RATE) * 32767 / 7 : -1;
         name[3] = "PITCH"; txt[3][put_num(txt[3], 0, fget(c, K_PITCH) - 12, 1)] = 0;
         val[3] = fget(c, K_PITCH) * 32767 / 24;
     } else {
@@ -1081,16 +1110,16 @@ static void uz_screen_update(void *scr, int dt)
         if (sl == -1) { n = 0; txt[3][n++] = '-'; txt[3][n++] = '0'; }
         if (sl & 1) { txt[3][n++] = '.'; txt[3][n++] = '5'; }
         txt[3][n] = 0; name[3] = "SLOPE"; val[3] = fget(c, K_SLOPE) * 32767 / 24;
+        if (!field_live(c, K_SLOPE)) { txt[3][0] = '-'; txt[3][1] = 0; val[3] = -1; }
     }
     char title[12], status[16];
     { int n = put_str(title, 0, "KEY "); key_name(title + n, k); }
     if (!look.ok) status[put_str(status, 0, "NO SAMPLE")] = 0;
-    else if (paste_mode) status[put_str(status, 0, "PASTE ON")] = 0;
-    else if (have_clip) status[put_str(status, 0, "COPIED")] = 0;
+    else if (have_clip) { int n = put_str(status, 0, "COPIED "); key_name(status + n, clip_key); }
     else status[0] = 0;
 
     uint32_t lh = 2166136261u;
-    for (int i = 0; i < 4; i++) { lh = hash_str(lh, name[i]); lh = hash_str(lh, txt[i]); lh = (lh ^ (uint32_t)(val[i] >> 6)) * 16777619u; }
+    for (int i = 0; i < 4; i++) { lh = hash_str(lh, name[i]); lh = hash_str(lh, txt[i]); lh = (lh ^ (uint32_t)(val[i] < 0 ? 0xFFFFFFFFu : (uint32_t)val[i] >> 6)) * 16777619u; }
     lh = hash_str(hash_str(lh, title), status);
     static uint32_t last_lh;
     if (lh != last_lh) { last_lh = lh; op1_screen_static_dirty(scr); }
@@ -1110,21 +1139,30 @@ static void uz_screen_update(void *scr, int dt)
     host_mark_dynamic();
 #endif
     fill_begin(scr, r);
-    /* the pose: a slow turn to and fro (7 s) and a nod (4.3 s), seen a little from above. Every hit pushes both on (a
+    /* the pose: a slow turn to and fro (12 s) and a nod (7.5 s), seen a little from above. Every hit pushes both on (a
      * twelfth of the turn, a tenth of the nod), eased in over a few frames, so while it fires the wrench swings in
      * time with the notes, faster the faster they come. The recoil kicks the nose up and the wrench back */
     uint32_t fresh = vis_w - seen_w;
     if (fresh > 16) fresh = 16;
-    const uint32_t ba = (uint32_t)dt * 8192u * 1024u / 7000u, bb = (uint32_t)dt * 8192u * 1024u / 4300u;
-    wig_ta += ba + fresh * (8192u * 1024u / 12u);
-    wig_tb += bb + fresh * (8192u * 1024u / 10u);
+    const uint32_t ba = (uint32_t)dt * 8192u * 1024u / 12000u, bb = (uint32_t)dt * 8192u * 1024u / 7500u;
+    wig_ta += ba + fresh * (8192u * 1024u / 5u);
+    wig_tb += bb + fresh * (8192u * 1024u / 4u);
+    if (fresh) {                                              /* every hit: full energy, a new jolt */
+        fire_e = 1024;
+        shake_x = rnd_px(PX(3)); shake_y = rnd_px(PX(2));
+    }
     wig_a += ba; wig_b += bb;
     wig_a += (uint32_t)((int32_t)(wig_ta - wig_a) >> 2);
     wig_b += (uint32_t)((int32_t)(wig_tb - wig_b) >> 2);
     const int32_t rc = recoil;
-    const int32_t yaw = 570 + ((280 * tsin((int32_t)(wig_a >> 10))) >> 15);           /* 25 deg +- 12 */
-    const int32_t tilt = -250 + ((90 * tsin((int32_t)(wig_b >> 10))) >> 15);          /* -11 deg +- 4 */
-    const pose_t pz_ = pose_make(yaw, tilt, rc / 14, PX(WR_X) + rc, PX(WR_Y));
+    /* firing, the swings grow (turn +-12 deg to +-26, nod +-4 to +-9) and it shakes; it calms down over 250 ms */
+    const int32_t ya = 280 + ((320 * fire_e) >> 10), ta = 90 + ((120 * fire_e) >> 10);
+    const int32_t yaw = 570 + ((ya * tsin((int32_t)(wig_a >> 10))) >> 15);
+    const int32_t tilt = -250 + ((ta * tsin((int32_t)(wig_b >> 10))) >> 15);
+    const int32_t sx = (shake_x * fire_e) >> 10, sy = (shake_y * fire_e) >> 10;
+    for (int i = 0; i < dt; i++) fire_e -= (fire_e >> 6) + 1;
+    if (fire_e < 0) fire_e = 0;
+    const pose_t pz_ = pose_make(yaw, tilt, rc / 12, PX(WR_X) + rc + sx, PX(WR_Y) + sy);
     const op1_pt tip = proj(&pz_, -80 * 16, -14 * 16, 0);                              /* the anvil's end */
     const uint32_t w = vis_w;
     if (w - seen_w > 16) seen_w = w - 16;
@@ -1136,9 +1174,9 @@ static void uz_screen_update(void *scr, int dt)
         b->on = 1; b->x = tip.x - PX(4); b->y = tip.y + rnd_px(1024);
         b->vx = -PX(300) + rnd_px(PX(40));
         b->vy = -hv.h * PX(9) + rnd_px(PX(15));
-        b->r = PX(2) + ((PX(4) >> 5) * (hv.g >> 5) >> 5);
+        b->r = PX(3) + ((PX(4) >> 5) * (hv.g >> 5) >> 5);         /* 3 .. 7 px, by the hit's gain */
         b->a = (int16_t)rnd_px(4096); b->va = (int16_t)(rnd_px(30) - 40);
-        recoil = PX(3); flash = 40;
+        recoil = PX(5); flash = 40;
         bang_bg = 250; bang_pop = 90; bang_new();
     }
     int nb = 0;
@@ -1149,7 +1187,7 @@ static void uz_screen_update(void *scr, int dt)
         b->vy += PX(240) * dt / 1000;
         b->y += b->vy * dt / 1000;
         b->a = (int16_t)(b->a + b->va * dt);
-        const int32_t m = b->r * 5 / 2 + PX(2);
+        const int32_t m = b->r * 3 / 2 + PX(2);
         if (b->x - m < PX(2) || b->y - m < PX(BAND_Y0 + 1) || b->y + m > PX(BAND_Y1 - 1)) { b->on = 0; continue; }
         nb++;
     }

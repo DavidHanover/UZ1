@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 — 2026-11-18
+
+- Firing is more violent: every hit throws the wrench further round (a fifth of its turn, a quarter of its nod),
+  its swings grow to about twice as wide, it shakes and kicks back harder, then calms down over a quarter second
+  after the last hit.
+- The idle turn is slower: 12 s to and fro, a 7.5 s nod.
+- The trigger guard is open: the background shows through it.
+- The bolts are now chunky cartoon hex nuts (a thick side, a lit face, ink outlines, a dark threaded hole), 3 to
+  7 px by the hit's gain.
+- MODE now runs ONE, RATCHET, HOLD, FLAM: RATCHET is one click on from the default (with ONE at the end of the
+  list, it seemed to be gone). Saved sounds keep their modes.
+- A setting the key's mode doesn't use is shown grey with no gauge and its knob does nothing: COUNT (shown as 1) and
+  RATE for ONE, COUNT for HOLD, RATE for FLAM, SLOPE for ONE.
+- Copy and paste is simpler: blue push copies the shown key, green push pastes over the shown key, at once. Paste
+  mode and Shift + green (paste to all) are gone.
+
 ## 0.1.0 — 2026-11-18
 
 First release. Not yet tested on hardware.

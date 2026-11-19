@@ -10,7 +10,7 @@ velocity that moves like a drummer's. It is one plugin file, `uz1.knl`, installe
 *Screen preview rendered on a PC; the OP-1's own renderer may differ in detail.*
 
 - **Needs:** an original OP-1 (not the OP-1 field) on Hundekraft 3.3 or later. Older cores refuse the file.
-- **Status:** 0.1, first release, **not yet tested on hardware**. A plugin runs inside the OP-1's audio engine, and a
+- **Status:** 0.2, early release, lightly tested on hardware. A plugin runs inside the OP-1's audio engine, and a
   faulty one can hang the unit until it is switched off. Back up first and use it at your own risk.
 
 ## Install
@@ -40,10 +40,10 @@ and its settings page comes up (its name at the top of the screen).
 
 | Mode | What the key does |
 |---|---|
-| **HOLD** | Repeats at RATE for as long as the key is down |
-| **RATCHET** | Plays COUNT hits at RATE, then stops, whatever the key does (tap it and let go) |
-| **FLAM** | A soft grace note, then the main hit GAP later |
 | **ONE** | A single hit |
+| **RATCHET** | Plays COUNT hits at RATE, then stops, whatever the key does (tap it and let go) |
+| **HOLD** | Repeats at RATE for as long as the key is down |
+| **FLAM** | A soft grace note, then the main hit GAP later |
 
 Every key starts as **ONE**, a plain one-shot, until you give it a pattern.
 
@@ -58,8 +58,8 @@ corner of the screen in that encoder's colour shows it.
 
 | Encoder | Turn | Shift + turn | Push |
 |---|---|---|---|
-| Blue | **MODE**: hold, ratchet, flam, one | **VEL**: flat, alt, human, ramp, 10 .. 100 % | copy this key |
-| Green | **COUNT** 2 .. 12 (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste mode on / off (Shift: paste to all keys) |
+| Blue | **MODE**: one, ratchet, hold, flam | **VEL**: flat, alt, human, ramp, 10 .. 100 % | copy this key |
+| Green | **COUNT** 2 .. 12 (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste the copy over this key |
 | White | **RATE** 1/8, 1/8T, 1/16 .. 1/64T | **GATE** 4 ms .. 512 ms, full | – |
 | Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | Shift: reset this key |
 
@@ -69,8 +69,11 @@ velocity (MIDI, the sequencers, or the keyvel feature) scales it all.
 
 **SLOPE** moves the pitch hit by hit: a sinker (−) drops each repeat, a riser (+) climbs, up to 24 semitones.
 
-**Copy and paste:** push blue on a key to copy it, push green, then play the keys that should get the copy; push green
-again to finish. Shift + green pastes the copy to every key.
+**Copy and paste:** push blue to copy the shown key's settings, play another key, push green: its settings are
+replaced by the copy, all of them, at once. The top of the screen says which key is copied.
+
+A setting the key's mode doesn't use is grey with no gauge, and its knob does nothing: COUNT and RATE for ONE (and
+SLOPE, with a single hit), COUNT for HOLD, RATE for FLAM.
 
 **T2** is the sample's page: the recording, with the part that plays bright.
 

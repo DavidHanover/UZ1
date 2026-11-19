@@ -2,11 +2,16 @@
 
 Where the project stands and what to know before changing it. The plan it was built from is `PLAN.md`.
 
-## State (0.1.0)
+## State (0.2.0)
 
 - Everything in `PLAN.md` phases 1–6 is built and passes the host checks (`./build.sh test`).
-- **Not yet run on an OP-1.** Phase 0 (the hardware spike) was skipped: 0.1 *is* the spike. The first hardware
-  session should go down the list below before anything else.
+- **Run on an OP-1 (0.1.x, by the owner):** it loads, and plays a hat recorded with the sampler on another slot
+  (AUTO found it). Before that it played a plain sine: AUTO had found an old buffer on another slot, which is how
+  it learnt that a slot's buffer can hold audio while the slot's sound is not a sampler (item 1 below).
+- Fixed after that first session: the key shown wandered through notes (the page came from the pitch, which
+  portamento bends: now the physical key, item 3), the lower labels were under the screen's edge (y 150), RATCHET
+  seemed missing (MODE order).
+- Still to check on hardware: the rest of the list below, and 0.2's key reading and screen load.
 
 ## Check first on hardware
 
@@ -39,8 +44,8 @@ Where the project stands and what to know before changing it. The plan it was bu
 - Integer fixed point only, no division or 64-bit arithmetic per sample (once per block or per hit is fine).
 - No libc: the firmware has no `memcpy` / `memset`. The file has `#pragma GCC optimize("no-tree-loop-distribute-patterns")`,
   and big structs are copied field by field (`sound_copy`).
-- Data stores (`op1_engine_data_store`) only from the input hook (KeyHandler). Keys pasted in paste mode are written
-  into the cache on the audio thread and stored by the next input event (the green push that ends paste mode).
+- Data stores (`op1_engine_data_store`) only from the input hook (KeyHandler): every edit, the paste (green push)
+  and the reset store at once.
 - The screen's moving parts stay inside `DYN`: the band `y 24..130` and the column `x 106..216` under it, between the lower labels (row `LBL_Y1`, y 133), down to `SCR_Y1` (149): the OP-1 shows nothing under y 150 (the test checks every frame); the
   labels and title are the still layer. The test checks it (`band_escapes`) over a whole turn.
 - The wrench is a 3D model (`mesh_build`: profiles extruded along z, sections turned along x), about 33 faces a

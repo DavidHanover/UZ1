@@ -432,34 +432,46 @@ int main(int argc, char **argv)
     play_key(7);
     CHECK(sel == 7, "playing a key shows its page");
     CHECK(fget(snd.cfg[7], K_MODE) == M_ONE, "a new key is a plain one-shot (ONE)");
-    CHECK(turn(OP1_ENG_T1, 0, -3, 0) == 1 && fget(stored_cfg(0, 7), K_MODE) == M_HOLD, "blue: MODE, stored with the sound");
+    CHECK(turn(OP1_ENG_T1, 0, 1, 0) == 1 && fget(stored_cfg(0, 7), K_MODE) == M_RATCHET, "blue: MODE, one click on from ONE is RATCHET, stored with the sound");
     turn(OP1_ENG_T1, 0, 9, 0);
-    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_ONE, "MODE stops at its last (ONE)");
-    turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, 30, 0);
+    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_FLAM, "MODE runs ONE, RATCHET, HOLD, FLAM, and stops there");
+    turn(OP1_ENG_T1, 0, -9, 0);
+    CHECK(fget(stored_cfg(0, 7), K_MODE) == M_ONE, "and back to ONE");
     uint32_t c7 = stored_cfg(0, 7);
-    CHECK(fget(c7, K_COUNT) == 5 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "green COUNT, white RATE, orange PITCH (clamped at +12)");
+    turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, -5, 1);
+    CHECK(stored_cfg(0, 7) == c7, "ONE: COUNT, RATE and SLOPE do nothing (one hit), their knobs change nothing");
+    turn(OP1_ENG_T1, 0, 1, 0);
+    turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, 30, 0);
+    c7 = stored_cfg(0, 7);
+    CHECK(fget(c7, K_COUNT) == 5 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "RATCHET: green COUNT, white RATE, orange PITCH (clamped at +12)");
     turn(OP1_ENG_T1, 0, 3, 1); turn(OP1_ENG_T1, 1, -3, 1); turn(OP1_ENG_T1, 2, -11, 1); turn(OP1_ENG_T1, 3, -5, 1);
     c7 = stored_cfg(0, 7);
     CHECK(fget(c7, K_VEL) == V_ALT && fget(c7, K_DEPTH) == 3 && fget(c7, K_LEVEL) == 12 && fget(c7, K_GATE) == 4 && fget(c7, K_SLOPE) == 7, "Shift: VEL (ALT 30 %%), LEVEL, GATE, SLOPE");
     turn(OP1_ENG_T1, 0, 12, 1);
     CHECK(fget(stored_cfg(0, 7), K_VEL) == V_HUMAN && fget(stored_cfg(0, 7), K_DEPTH) == 5, "VEL runs on from ALT into HUMAN (50 %%)");
+    turn(OP1_ENG_T1, 0, 1, 0); c7 = stored_cfg(0, 7);                           /* HOLD */
+    turn(OP1_ENG_T1, 1, 2, 0);
+    CHECK(fget(c7, K_MODE) == M_HOLD && stored_cfg(0, 7) == c7, "HOLD: COUNT does nothing (it repeats while held)");
+    turn(OP1_ENG_T1, 2, 1, 0);
+    CHECK(fget(stored_cfg(0, 7), K_RATE) == 3, "HOLD: RATE does");
+    turn(OP1_ENG_T1, 0, 1, 0); c7 = stored_cfg(0, 7);                           /* FLAM */
+    turn(OP1_ENG_T1, 2, 2, 0);
+    CHECK(fget(c7, K_MODE) == M_FLAM && stored_cfg(0, 7) == c7, "FLAM: RATE does nothing");
+    turn(OP1_ENG_T1, 1, -1, 0);
+    CHECK(fget(stored_cfg(0, 7), K_COUNT) == 4, "FLAM: COUNT sets the gap");
+    turn(OP1_ENG_T1, 0, -2, 0);
     CHECK(stored_cfg(0, 6) == CFG_DEFAULT && stored_cfg(0, 8) == CFG_DEFAULT, "the other keys are untouched");
-    push(OP1_ENG_T1, 0, 0);
-    CHECK(have_clip && clip == stored_cfg(0, 7), "blue push copies the key");
-    push(OP1_ENG_T1, 1, 0);
-    CHECK(paste_mode, "green push: paste mode");
-    play_key(2); play_key(11);
-    CHECK(snd.cfg[2] == clip && snd.cfg[11] == clip && snd_dirty, "keys played in paste mode take the copy");
-    push(OP1_ENG_T1, 1, 0);
-    CHECK(!paste_mode && stored_cfg(0, 2) == clip && stored_cfg(0, 11) == clip && !snd_dirty, "green again ends it, and the pasted keys are stored");
-    play_key(4);
-    CHECK(stored_cfg(0, 4) == CFG_DEFAULT, "after paste mode a key is just played");
-    push(OP1_ENG_T1, 1, 1);
-    int allp = 1; for (int k = 0; k < 24; k++) if (stored_cfg(0, k) != clip) allp = 0;
-    CHECK(allp, "Shift + green push pastes to all 24 keys");
+    have_clip = 0; play_key(9); const uint32_t c9 = stored_cfg(0, 9);
+    CHECK(push(OP1_ENG_T1, 1, 0) == 1 && stored_cfg(0, 9) == c9, "green push with nothing copied does nothing");
+    play_key(7); push(OP1_ENG_T1, 0, 0);
+    CHECK(have_clip && clip == stored_cfg(0, 7) && clip_key == 7, "blue push copies the shown key");
+    play_key(2); push(OP1_ENG_T1, 1, 0);
+    CHECK(stored_cfg(0, 2) == clip, "green push pastes it over the shown key, at once, all of it");
+    play_key(11); push(OP1_ENG_T1, 1, 0);
+    CHECK(stored_cfg(0, 11) == clip && stored_cfg(0, 4) == CFG_DEFAULT, "and again on the next key; keys not pasted on stay as they were");
     push(OP1_ENG_T1, 3, 1);
-    CHECK(stored_cfg(0, 4) == CFG_DEFAULT && stored_cfg(0, 5) == clip, "Shift + orange push resets the shown key only");
-    CHECK(push(OP1_ENG_T1, 3, 0) == 1 && stored_cfg(0, 4) == CFG_DEFAULT, "orange push without Shift does nothing (but is taken)");
+    CHECK(stored_cfg(0, 11) == CFG_DEFAULT && stored_cfg(0, 2) == clip, "Shift + orange push resets the shown key only");
+    CHECK(push(OP1_ENG_T1, 3, 0) == 1 && stored_cfg(0, 11) == CFG_DEFAULT, "orange push without Shift does nothing (but is taken)");
     /* T2: the globals and the source */
     put_sound(0, SRC_AUTO, 0, 100, 0, 0, 0);
     turn(OP1_ENG_T2, 0, 20, 0); turn(OP1_ENG_T2, 1, -30, 0); turn(OP1_ENG_T2, 2, -40, 0); turn(OP1_ENG_T2, 3, 30, 0);
@@ -494,6 +506,21 @@ int main(int argc, char **argv)
     int turned = 0, few = 1 << 30, many = 0, esc2 = 0;
     for (int i = 0; i < 500; i++) { frame(i == 218 ? "wrench, turned the other way" : "wrench turning"); esc2 += band_escapes(); if (vis_faces < few) few = vis_faces; if (vis_faces > many) many = vis_faces; if (vis_faces) turned++; }
     CHECK(esc2 == 0 && few >= 18 && turned == 500, "the wrench turns to and fro for 8 s, solid (%d .. %d faces) and inside its areas (%d out)", few, many, esc2);
+    { /* the most violent it gets: a held 1/64 for 3 s, a frame every 16 ms */
+      all_keys(kcfg(M_HOLD, 0, 6, 0, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
+      reset(); on(0, page_midi(3), 127); int esc3 = 0;
+      for (int i = 0; i < 190; i++) { run_ms(16); frame(i == 40 ? "held 1/64: thrashing" : "held 1/64"); esc3 += band_escapes(); }
+      off(0); run_ms(300); for (int i = 0; i < 40; i++) frame("calming down");
+      CHECK(esc3 == 0, "a held 1/64 for 3 s: the thrashing wrench stays inside its areas (%d out)", esc3);
+      CHECK(fire_e == 0, "and it calms down after"); }
+    all_keys(CFG_DEFAULT); C24[3] = kcfg(M_RATCHET, 3, 4, 0, -2, V_ALT, 5, 15, 15); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
+    { all_keys(CFG_DEFAULT); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); play_key(3); frame("one-shot page");
+      int gauge_r = 0, gauge_w = 0, grey_txt = 0;
+      for (int j = 0; j < dyn_from; j++) { if (lines[j].w == 1024) { grey_txt += lines[j].c[0] == COL_GREY[0] && lines[j].c[1] == COL_GREY[1]; continue; }
+          if (lines[j].y0 == lines[j].y1 && lines[j].y0 == OP1_Q10(19) && lines[j].x0 > OP1_Q10(216)) gauge_r++;
+          if (lines[j].y0 == lines[j].y1 && lines[j].y0 == OP1_Q10(LBL_Y1 + 11) && lines[j].x0 < OP1_Q10(104)) gauge_w++; }
+      CHECK(gauge_r == 0 && gauge_w == 0 && grey_txt > 10, "a one-shot page: COUNT and RATE grey, with no gauge (%d, %d gauge lines)", gauge_r, gauge_w); }
+    all_keys(CFG_DEFAULT); C24[3] = kcfg(M_RATCHET, 3, 4, 0, -2, V_ALT, 5, 15, 15); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24);
     host_shift_held = 1; frame("shift: the second set"); text_scan(&txt, cor, &bad); host_shift_held = 0;
     CHECK(text_hash() != h_plain && !bad, "Shift shows the second set, and it fits");
     /* the longest values fit */
