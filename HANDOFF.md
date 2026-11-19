@@ -61,7 +61,9 @@ Where the project stands and what to know before changing it. The plan it was bu
 ## Saved data
 
 `op1_engine_data`, version byte 1: bytes 0..7 the globals (version, source, start, length, tune, swing), 8..103 the
-24 key words (`FLD`, 32 bits, all used), 104..127 a flag byte per key (from 0.3: `KF_CHOKE`, `KF_REV`, `KF_SAG`, ATTK in bits 3..6). A reader takes what
+24 key words (`FLD`, 32 bits, all used), 104..127 a flag byte per key (from 0.3: `KF_CHOKE`, `KF_REV`, `KF_SAG`, ATTK in bits 3..6), 128..151
+RATCHET's count per key (2 .. 24, from 0.3.1; 0 or missing: the key word's old 3-bit index, `COUNTS`). The key
+word's COUNT field is now FLAM's GAP only. A reader takes what
 is there: shorter data leaves the rest at the defaults, so new fields go on the end, and new key settings that
 don't fit the key word go in the flag byte (1 bit free) or a new block after it.
 

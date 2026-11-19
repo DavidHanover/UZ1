@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — 2026-11-18
+
+- RATCHET's COUNT runs 2, 3, 4 … 24, one hit a click (it was 2 to 12, skipping). It has its own byte per key in the
+  saved data (152 bytes); sounds saved before keep their counts. The grip's 12 ridges show the hits left in
+  proportion past 12.
+
 ## 0.3.0 — 2026-11-18
 
 - VEL has ten positions: FLAT, ALT LO / MID / HI (30, 60, 80 %), HUM LO / HI (30, 70 %), RAMP LO / HI (70, 100 %),

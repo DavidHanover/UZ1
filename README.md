@@ -62,7 +62,7 @@ corner of the screen in that encoder's colour shows it.
 | Encoder | Turn | Shift + turn | Push |
 |---|---|---|---|
 | Blue | **MODE**: one, ratchet, hold, flam | **VEL**: flat, alt lo/mid/hi, hum lo/hi, ramp lo/hi, sag lo/hi | copy this key |
-| Green | **COUNT** 2 .. 12 (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste the copy over this key |
+| Green | **COUNT** 2 .. 24, one a click (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste the copy over this key |
 | White | **RATE** 1/8, 1/8T, 1/16 .. 1/64T | **GATE** 4 ms .. 512 ms, full, or **ATTK** off, 1 .. 128 ms | **REV** on / off (Shift: GATE or ATTK) |
 | Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | **CHOKE** on / off (Shift: reset this key) |
 

@@ -297,6 +297,18 @@ int main(int argc, char **argv)
     CHECK(hits_of(0) == 12 && !any_active(), "and ends by itself after its 12 hits, freeing the voice");
     wav("ratchet_12_16th");
 
+    /* 4b. COUNT up to 24, in ones; older sounds keep their counts */
+    sound1(kcfg(M_RATCHET, 0, 6, 0, 0, V_FLAT, 0, 15, 15));
+    for (int k = 0; k < 24; k++) host_eng_data[0][DATA_CNT + k] = (uint8_t)(k + 2 > 24 ? 24 : k + 2);
+    snd_slot = -1;
+    int cnt_bad = 0; for (int c = 2; c <= 24; c++) { reset(); on(0, page_midi(c - 2), 127); run_blocks(1); off(0); run_ms(1000); if (hits_of(0) != c) cnt_bad++; }
+    CHECK(cnt_bad == 0, "RATCHET plays every count from 2 to 24 (%d wrong)", cnt_bad);
+    wav("ratchet_24x64");
+    all_keys(kcfg(M_RATCHET, 6, 6, 0, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); host_eng_data_n[0] = DATA_CNT;
+    reset(); on(0, page_midi(3), 127); run_blocks(1); off(0); run_ms(500);
+    CHECK(hits_of(0) == 10, "a sound saved before 0.3.1 keeps its count (10, from the key word)");
+    host_eng_data_n[0] = DATA_N;
+
     /* 5. HOLD: repeats while the key is down, nothing after */
     sound1(kcfg(M_HOLD, 0, 2, 0, 0, V_FLAT, 0, 15, 15));          /* 1/16 at 120: 125 ms */
     reset(); on(0, 60, 127); run_ms(560); off(0); const long up = blk * 128; run_ms(800);
@@ -484,7 +496,13 @@ int main(int argc, char **argv)
     turn(OP1_ENG_T1, 0, 1, 0);
     turn(OP1_ENG_T1, 1, 3, 0); turn(OP1_ENG_T1, 2, -2, 0); turn(OP1_ENG_T1, 3, 30, 0);
     c7 = stored_cfg(0, 7);
-    CHECK(fget(c7, K_COUNT) == 5 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "RATCHET: green COUNT, white RATE, orange PITCH (clamped at +12)");
+    CHECK(host_eng_data[0][DATA_CNT + 7] == 7 && fget(c7, K_RATE) == 2 && fget(c7, K_PITCH) == 24, "RATCHET: green COUNT (4 + 3: one a click), white RATE, orange PITCH (clamped at +12)");
+    { int ones = 1; for (int i = 0; i < 25; i++) { const int before = host_eng_data[0][DATA_CNT + 7]; turn(OP1_ENG_T1, 1, 1, 0);
+          const int now = host_eng_data[0][DATA_CNT + 7]; if (now != (before < 24 ? before + 1 : 24)) ones = 0; }
+      CHECK(ones && host_eng_data[0][DATA_CNT + 7] == 24, "COUNT runs up one at a time to 24, and stops there");
+      turn(OP1_ENG_T1, 1, -40, 0);
+      CHECK(host_eng_data[0][DATA_CNT + 7] == 2, "and down to 2");
+      turn(OP1_ENG_T1, 1, 5, 0); }
     turn(OP1_ENG_T1, 0, 3, 1); turn(OP1_ENG_T1, 1, -3, 1); turn(OP1_ENG_T1, 2, -11, 1); turn(OP1_ENG_T1, 3, -5, 1);
     c7 = stored_cfg(0, 7);
     CHECK(fget(c7, K_VEL) == V_ALT && fget(c7, K_DEPTH) == 8 && fget(c7, K_LEVEL) == 12 && fget(c7, K_GATE) == 4 && fget(c7, K_SLOPE) == 7, "Shift: VEL (three on: ALT HI, 80 %%), LEVEL, GATE, SLOPE");
@@ -516,7 +534,7 @@ int main(int argc, char **argv)
     turn(OP1_ENG_T1, 2, 2, 0);
     CHECK(fget(c7, K_MODE) == M_FLAM && stored_cfg(0, 7) == c7, "FLAM: RATE does nothing");
     turn(OP1_ENG_T1, 1, -1, 0);
-    CHECK(fget(stored_cfg(0, 7), K_COUNT) == 4, "FLAM: COUNT sets the gap");
+    CHECK(fget(stored_cfg(0, 7), K_COUNT) == 1 && host_eng_data[0][DATA_CNT + 7] == 7, "FLAM: COUNT sets the gap (RATCHET's count kept)");
     turn(OP1_ENG_T1, 0, -2, 0);
     CHECK(stored_cfg(0, 6) == CFG_DEFAULT && stored_cfg(0, 8) == CFG_DEFAULT, "the other keys are untouched");
     have_clip = 0; play_key(9); const uint32_t c9 = stored_cfg(0, 9);
