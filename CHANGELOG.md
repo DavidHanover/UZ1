@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4 — 2026-11-20
+
+- LEVEL's last step is OFF (it was -30 dB; the lowest sounding step is now -28 dB). A key at OFF plays nothing and
+  shows no bang, but still cuts off the CHOKE keys: a silent stop key. Sounds saved with a key at -30 dB load with it
+  at OFF.
+
 ## 0.3.3 — 2026-11-19
 
 - MODE runs ONE, FLAM, RATCHET, HOLD (it was ONE, RATCHET, HOLD, FLAM). Saved sounds keep their modes.

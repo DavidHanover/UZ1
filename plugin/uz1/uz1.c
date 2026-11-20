@@ -397,15 +397,17 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
         }
         if (s1 - s0 >= 64) { t->d = s->d; t->s0 = s0; t->s1 = s1; }
     }
-    if (!t->d) t->stop = 1;
+    const int off = fget(c, K_LEVEL) == 0;                   /* LEVEL OFF: a silent key that only chokes */
+    if (!t->d || off) t->stop = 1;
     for (int u = 0; u < OP1_VOICES; u++)                         /* the same key again: the older one stops; */
         if (u != v && tv[u].live && tv[u].started && (int32_t)(tv[u].stamp - t->stamp) < 0 && (tv[u].key == page || tv[u].choke))
             tv[u].stop = 1;                                   /* and a choke key, whatever note this is */
+    if (off) return;                                          /* nothing plays, so nothing on screen */
     vis_trig++;
     vis_left_stamp = t->stamp;
 }
 
-static inline int32_t level_gain(int l) { return (int32_t)(pow2_96(-(15 - l) * 32) >> 1); }      /* Q15, 2 dB a step */
+static inline int32_t level_gain(int l) { return l ? (int32_t)(pow2_96(-(15 - l) * 32) >> 1) : 0; }   /* Q15, 2 dB a step; 0 is OFF */
 static inline int32_t gate_samples(int g) { return (int32_t)((4u * pow2_96(g * 48) >> 16) * 882 / 10); }   /* 4 ms * 2^(g/2) */
 
 static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
@@ -1197,7 +1199,9 @@ static void uz_screen_update(void *scr, int dt)
         const int vi = vel_idx(c, view.flags[k]);
         int n;
         txt[0][put_str(txt[0], 0, VELP[vi].txt)] = 0; name[0] = "VEL"; val[0] = vi * 32767 / (VELP_N - 1);
-        name[1] = "LEVEL"; txt[1][put_str(txt[1], put_num(txt[1], 0, -(15 - fget(c, K_LEVEL)) * 2, 0), "DB")] = 0;
+        name[1] = "LEVEL";
+        if (fget(c, K_LEVEL) == 0) txt[1][put_str(txt[1], 0, "OFF")] = 0;
+        else txt[1][put_str(txt[1], put_num(txt[1], 0, -(15 - fget(c, K_LEVEL)) * 2, 0), "DB")] = 0;
         val[1] = fget(c, K_LEVEL) * 32767 / 15;
         if (white_attk) {                                     /* ATTK: off, 1.0MS .. 128MS */
             const int at = atk_of(view.flags[k]);

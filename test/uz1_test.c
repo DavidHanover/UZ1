@@ -441,6 +441,15 @@ int main(int argc, char **argv)
     CHECK(hits_of(0) == 3 && hits_of(1) == 1, "and only it: the other note plays");
     reset(); on(0, page_midi(9), 127); run_blocks(1); off(0); on(1, page_midi(2), 127); run_blocks(1); off(1); run_ms(400);
     CHECK(hits_of(0) == 1 && hits_of(1) == 2, "a CHOKE key started after another note doesn't stop that one");
+    { /* LEVEL OFF: a silent key that only chokes */
+      C24[9] = kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 0); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); choke_key(0, 2, 1);
+      reset(); run_ms(50); const uint32_t vt = vis_trig;
+      on(0, page_midi(9), 127); run_blocks(1); off(0); run_ms(300);
+      CHECK(nhits == 0 && peak(0, rec_n) == 0 && vis_trig == vt && !any_active(), "LEVEL OFF: the key plays nothing, shows no bang, and its voice ends (%d hits, peak %d)", nhits, peak(0, rec_n));
+      reset(); on(0, page_midi(2), 127); run_blocks(1); off(0); run_ms(600); const size_t cut = rec_n;
+      on(1, page_midi(9), 127); run_blocks(1); off(1); run_ms(3000);
+      CHECK(hits_of(0) == 3 && hits_of(1) == 0 && peak(cut + at(5), rec_n) == 0, "and it chokes a CHOKE key: 3 hits, then silence (after: %d)", peak(cut + at(5), rec_n));
+      C24[9] = kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); choke_key(0, 2, 1); }
     host_eng_data_n[0] = DATA_N_V1; snd_slot = -1; sound_read(0, &snd);
     CHECK(snd.flags[2] == 0 && snd.cfg[2] == C24[2], "a sound saved by 0.2 or before (104 bytes) loads with CHOKE off, its keys as they were");
     host_eng_data_n[0] = DATA_N; choke_key(0, 2, 0);

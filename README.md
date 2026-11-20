@@ -52,6 +52,9 @@ Every key starts as **ONE**, a plain one-shot, until you give it a pattern.
 **CHOKE** (push orange): a key with CHOKE on is cut off the moment any other note starts, like an open hi-hat
 closed by the closed one. Keys without it play on over each other. The top of the screen shows `KEY F#1 CHOKE`.
 
+**A silent choke key:** turn a key's LEVEL all the way down, to **OFF**. Pressing it plays nothing and shows no
+bang, but it still cuts off every CHOKE key, so it works as a dedicated "stop" key.
+
 The first hit is always the key press itself; the ones after it are spaced by the OP-1's tempo (its BPM, or MIDI
 clock). Each new hit cuts off the one before it on the same key, as a real hi-hat chokes, and pressing a key that is
 still ratcheting starts it over. Up to six keys can play at once.
@@ -64,7 +67,7 @@ corner of the screen in that encoder's colour shows it.
 | Encoder | Turn | Shift + turn | Push |
 |---|---|---|---|
 | Blue | **MODE**: one, flam, ratchet, hold | **VEL**: flat, alt lo/mid/hi, hum lo/hi, ramp lo/hi, sag lo/hi | copy this key |
-| Green | **COUNT** 2 .. 24, one a click (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -30 dB | paste the copy over this key |
+| Green | **COUNT** 2 .. 24, one a click (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -28 dB, then **OFF** | paste the copy over this key |
 | White | **RATE** 1/8, 1/8T, 1/16 .. 1/64T | **GATE** 4 ms .. 512 ms, full, or **ATTK** off, 1 .. 128 ms | **REV** on / off (Shift: GATE or ATTK) |
 | Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | **CHOKE** on / off (Shift: reset this key) |
 
