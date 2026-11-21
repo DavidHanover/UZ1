@@ -125,7 +125,7 @@ static uint32_t kcfg(int mode, int count, int rate, int pitch, int slope, int ve
 }
 static void put_sound(int slot, int src, int start, int len, int tune, int swing, const uint32_t *cfg24)
 {
-    uint8_t b[DATA_N] = { DATA_VER, (uint8_t)src, (uint8_t)start, (uint8_t)len, (uint8_t)(tune + 12), (uint8_t)swing, 0, 0 };
+    uint8_t b[DATA_N] = { DATA_VER, (uint8_t)src, (uint8_t)start, (uint8_t)len, (uint8_t)(tune + TUNE_0), (uint8_t)swing, G_TUNE24, 0 };
     for (int k = 0; k < 24; k++) { const uint32_t c = cfg24 ? cfg24[k] : CFG_DEFAULT; memcpy(b + 8 + 4 * k, &c, 4); }
     memcpy(host_eng_data[slot], b, DATA_N); host_eng_data_n[slot] = DATA_N; host_eng_data_owner[slot] = op1_engine_rec_owner(UZ_NAME);
     snd_dirty = 0; snd_slot = -1; src_force = 1;
@@ -348,6 +348,10 @@ int main(int argc, char **argv)
     CHECK(hits[0].st == 65536, "PITCH +12: the sample twice as fast (step %u, 32768 is its own speed)", hits[0].st);
     all_keys(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, -12, 0, C24); reset(); on(0, 60, 127); run_ms(200);
     CHECK(hits[0].st == 16384, "TUNE -12: half speed (step %u)", hits[0].st);
+    put_sound(0, SRC_AUTO, 0, 100, -24, 0, C24); reset(); on(0, 60, 127); run_ms(200);
+    CHECK(hits[0].st == 8192, "TUNE -24: quarter speed (step %u)", hits[0].st);
+    put_sound(0, SRC_AUTO, 0, 100, 24, 0, C24); reset(); on(0, 60, 127); run_ms(200);
+    CHECK(hits[0].st == 131072, "TUNE +24: four times as fast (step %u)", hits[0].st);
     all_keys(kcfg(M_ONE, 0, 0, 7, 0, V_FLAT, 0, 15, 15)); put_sound(0, SRC_AUTO, 0, 100, 0, 0, C24); reset(); on(0, 60, 127); run_ms(200);
     CHECK(fabs(hits[0].st / 32768.0 - pow(2, 7 / 12.0)) < 0.0002, "PITCH +7: within 0.1 cent of a fifth (%.5f)", hits[0].st / 32768.0);
     sound1(kcfg(M_RATCHET, 3, 4, 0, -4, V_FLAT, 0, 15, 15));      /* the sinker: 5 at 1/32, a tone down each */
@@ -357,8 +361,19 @@ int main(int argc, char **argv)
     wav("sinker_5x32");
     sound1(kcfg(M_RATCHET, 7, 6, 0, 12, V_FLAT, 0, 15, 15));
     reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
-    CHECK(nhits == 12 && hits[3].h == 36 && hits[4].h == 48 && hits[11].h == 48, "the riser, +6 a hit, stops at +24 semitones (hits 4, 5, 12: %d %d %d half steps)", hits[3].h, hits[4].h, hits[11].h);
+    { int climb = nhits == 12; for (int h = 0; h < nhits; h++) if (hits[h].h != 12 * h) climb = 0;
+      CHECK(climb && hits[11].st > hits[10].st, "the riser, +6 a hit, keeps climbing: hit 12 is 66 semitones up (%d half steps)", nhits ? hits[nhits - 1].h : 0); }
     wav("riser_12x64");
+    sound1(kcfg(M_RATCHET, 7, 6, 0, -12, V_FLAT, 0, 15, 15));
+    reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
+    { int sink = nhits == 12; for (int h = 1; h < nhits; h++) if (hits[h].h != -12 * h || hits[h].st > hits[h - 1].st) sink = 0;
+      CHECK(sink, "and the sinker at -6 a hit keeps sinking: hit 12 is 66 semitones down (%d half steps, step %u)", nhits ? hits[nhits - 1].h : 0, nhits ? hits[nhits - 1].st : 0); }
+    sound1(kcfg(M_HOLD, 0, 7, 0, 12, V_FLAT, 0, 15, 15));
+    reset(); on(0, 60, 127); run_ms(3000); off(0); run_ms(300);
+    CHECK(nhits > 60 && !any_active(), "a riser held for 3 s at 1/64T goes past every limit and the voice still ends (%d hits)", nhits);
+    sound1(kcfg(M_HOLD, 0, 7, 0, -12, V_FLAT, 0, 15, 15));
+    reset(); on(0, 60, 127); run_ms(3000); off(0); run_ms(4100);
+    CHECK(nhits > 60 && !any_active(), "and a sinker the same: its last hit, sunk out of hearing, stops within 4 s (%d hits)", nhits);
 
     /* 8. velocity patterns and level */
     sound1(kcfg(M_RATCHET, 3, 4, 0, 0, V_ALT, 6, 15, 15));
@@ -482,6 +497,43 @@ int main(int argc, char **argv)
     CHECK(peak(0, rec_n) == 0, "a slot with no buffer at all is skipped");
     make_hat(1, 3000, 6000); host_sb[3] = 0; host_sb[0] = 0;
 
+    /* 14b. the sampler's own settings are where UZ-1's start: its START and END markers, its tune, gain and direction */
+    { make_sine(1, 3000, 40000, 441, 20000);
+      sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15));
+      reset(); on(0, 60, 127); run_ms(50);
+      const unsigned st0 = hits[0].st; const int g0 = hits[0].g;
+      CHECK(srcb[src_i].on <= 3000 && srcb[src_i].end >= 42900 && st0 == 32768, "a slot that is not a sampler any more: the whole recording, as recorded (%d .. %d, step %u)", srcb[src_i].on, srcb[src_i].end, st0);
+      host_sampler_type[1] = 6; host_sampler_rate[1] = RATE_C4;
+      host_knobs[1][0] = (int16_t)(10000LL * 32768 / SMP_FULL); host_knobs[1][3] = (int16_t)(20000LL * 32768 / SMP_FULL);
+      host_knobs[1][4] = 0; host_knobs[1][7] = 8192;
+      src_force = 1; reset(); on(0, 60, 127); run_ms(50);
+      CHECK(abs(srcb[src_i].on - 10000) <= 12 && abs(srcb[src_i].end - 20000) <= 12, "the sampler's START and END: it plays the part between them (%d .. %d)", srcb[src_i].on, srcb[src_i].end);
+      CHECK(hits[0].st == st0 && abs(hits[0].g - g0) <= 2 && !tv[0].ph[0].rev, "a sampler at its own defaults plays as before (step %u, gain %d)", hits[0].st, hits[0].g);
+      host_sampler_rate[1] = RATE_C4 * 2; src_force = 1; reset(); on(0, 60, 127); run_ms(50);
+      CHECK(abs((int)hits[0].st - 65536) <= 2, "the sampler tuned an octave up: TUNE 0 plays an octave up (step %u)", hits[0].st);
+      put_sound(0, SRC_AUTO, 0, 100, -12, 0, C24); reset(); on(0, 60, 127); run_ms(50);
+      CHECK(abs((int)hits[0].st - 32768) <= 2, "and TUNE -12 from there plays it as recorded (step %u)", hits[0].st);
+      host_sampler_rate[1] = 12345; sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15)); reset(); on(0, 60, 127); run_ms(50);
+      CHECK(hits[0].st == st0, "a rate that makes no sense is taken as not set (step %u)", hits[0].st);
+      host_sampler_rate[1] = RATE_C4;
+      { /* the sampler's gain as the sampler plays it: a quarter of its knob 0 dB, an eighth -12 dB, the top +24 dB,
+         * clipped at full scale. The 441 Hz sine at 20000, a single hit */
+        src_force = 1; reset(); on(0, 60, 127); run_ms(50); const int p0 = peak(at(5), at(45));
+        host_knobs[1][7] = 4096; src_force = 1; reset(); on(0, 60, 127); run_ms(50); const int pq = peak(at(5), at(45));
+        host_knobs[1][7] = 32767; src_force = 1; reset(); on(0, 60, 127); run_ms(50); const int pt = peak(at(5), at(45));
+        int flat = 0, nn = 0; for (size_t i = at(5); i < at(45); i++, nn++) if (abs(rec[i]) >= pt - 2) flat++;
+        CHECK(fabs(20 * log10((double)pq / p0) + 12.04) < 0.2 && fabs((double)pt / p0 - 32767.0 / 20000) < 0.03 && flat > nn / 2,
+              "the sampler's gain: an eighth of its knob 12 dB under a quarter's (%.2f dB), the top +24 dB clipped square at full scale (peak %d for %d, %d %% flat out)",
+              20 * log10((double)pq / p0), pt, p0, flat * 100 / nn);
+        host_knobs[1][7] = 8192; }
+      host_knobs[1][7] = 8192; host_knobs[1][4] = 0x4000; src_force = 1; reset(); on(0, 60, 127); run_ms(5);
+      CHECK(tv[0].ph[0].rev && tv[0].ph[0].i > 19000, "the sampler set to reverse: the key plays backwards, from END (at %d)", tv[0].ph[0].i);
+      key_flags(0, 0, KF_REV); reset(); on(0, page_midi(0), 127); run_ms(5);
+      CHECK(!tv[0].ph[0].rev && tv[0].ph[0].i < 11000, "and REV on the key flips it back: forwards from START (at %d)", tv[0].ph[0].i);
+      key_flags(0, 0, 0);
+      host_sampler_type[1] = 0; for (int i = 0; i < 8; i++) host_knobs[1][i] = 0;
+      make_hat(1, 3000, 6000); sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 15, 15)); }
+
     /* 15. six HOLD keys at 1/64T: everything at once */
     sound1(kcfg(M_HOLD, 0, 7, 0, 0, V_HUMAN, 5, 15, 15));
     reset(); for (int v = 0; v < 6; v++) on(v, page_midi(v), 127); run_ms(400); for (int v = 0; v < 6; v++) off(v); run_ms(400);
@@ -493,7 +545,10 @@ int main(int argc, char **argv)
     /* 16. saving: data round trip, old or broken data */
     all_keys(CFG_DEFAULT); C24[3] = kcfg(M_FLAM, 4, 1, -5, 3, V_RAMP, 7, 9, 11); put_sound(0, 2, 10, 60, 4, 12, C24);
     sound_read(0, &snd);
-    CHECK(snd.src == 2 && snd.start == 10 && snd.len == 60 && snd.tune == 16 && snd.swing == 12 && snd.cfg[3] == C24[3] && snd.cfg[4] == CFG_DEFAULT, "the sound's data reads back as stored");
+    CHECK(snd.src == 2 && snd.start == 10 && snd.len == 60 && snd.tune == 28 && snd.swing == 12 && snd.cfg[3] == C24[3] && snd.cfg[4] == CFG_DEFAULT, "the sound's data reads back as stored");
+    host_eng_data[0][6] = 0; host_eng_data[0][4] = 16; sound_read(0, &snd);
+    CHECK(snd.tune - TUNE_0 == 4, "a sound saved before 0.3.5 (TUNE 0 .. 24) keeps its tune (+%d)", snd.tune - TUNE_0);
+    host_eng_data[0][6] = G_TUNE24; host_eng_data[0][4] = 28;
     host_eng_data_n[0] = 8; sound_read(0, &snd);
     CHECK(snd.cfg[3] == CFG_DEFAULT && snd.src == 2, "short data: the globals, keys at their defaults");
     host_eng_data_n[0] = DATA_N; host_eng_data[0][0] = 7; sound_read(0, &snd);
@@ -501,7 +556,7 @@ int main(int argc, char **argv)
     for (int i = 0; i < DATA_N; i++) host_eng_data[0][i] = (uint8_t)(i * 37 + 11);
     host_eng_data[0][0] = DATA_VER; sound_read(0, &snd);
     int clean = 1; for (int k = 0; k < 24; k++) for (int f = 0; f < K_N; f++) if (fget(snd.cfg[k], f) > FLD[f].max) clean = 0;
-    CHECK(clean && snd.src <= SRC_AUTO && snd.tune <= 24 && snd.swing <= 25 && snd.len >= 1 && snd.len <= 100, "garbage data is clamped to valid settings");
+    CHECK(clean && snd.src <= SRC_AUTO && snd.tune <= 48 && snd.swing <= 25 && snd.len >= 1 && snd.len <= 100, "garbage data is clamped to valid settings");
     host_eng_data_owner[0] = 0; sound_read(0, &snd);
     CHECK(snd.src == SRC_AUTO && snd.cfg[0] == CFG_DEFAULT, "another engine's data is not read");
 
@@ -610,7 +665,9 @@ int main(int argc, char **argv)
     /* T2: the globals and the source */
     put_sound(0, SRC_AUTO, 0, 100, 0, 0, 0);
     turn(OP1_ENG_T2, 0, 20, 0); turn(OP1_ENG_T2, 1, -30, 0); turn(OP1_ENG_T2, 2, -40, 0); turn(OP1_ENG_T2, 3, 30, 0);
-    CHECK(host_eng_data[0][2] == 20 && host_eng_data[0][3] == 70 && host_eng_data[0][4] == 0 && host_eng_data[0][5] == 25, "T2: START, LENGTH, TUNE (stops at -12), SWING (stops at 75 %%)");
+    CHECK(host_eng_data[0][2] == 20 && host_eng_data[0][3] == 70 && host_eng_data[0][4] == 0 && host_eng_data[0][5] == 25, "T2: START, LENGTH, TUNE (stops at -24), SWING (stops at 75 %%)");
+    turn(OP1_ENG_T2, 2, 60, 0);
+    CHECK(host_eng_data[0][4] == 48 && host_eng_data[0][6] == G_TUNE24, "TUNE stops at +24");
     turn(OP1_ENG_T2, 1, 200, 0);
     CHECK(host_eng_data[0][3] == 100, "LENGTH turned all the way up: the whole recording");
     push(OP1_ENG_T2, 3, 0); const int s1v = host_eng_data[0][1];

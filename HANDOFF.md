@@ -27,6 +27,13 @@ Where the project stands and what to know before changing it. The plan it was bu
 2. **The peaks array** (`sb + 4`, one value per 256 samples) is what `scan()` uses to find the start and end of the
    recording. If it isn't kept up to date for a slot that isn't shown, the start and end will be wrong. The fallback
    would be to scan the samples themselves, a chunk per call.
+2b. **The sampler's settings** (0.3.5, as TYR8's sample layer reads them): `slot_is_sampler` (engine table
+   0xFF8016E4 + slot x 4, 6 = sampler), `slot_rate` (the sampler object +4, Q31, 88200 / (base freq x 16384); middle C
+   `RATE_C4` plays as recorded), knob words 0 / 3 (start / end, fractions of `SMP_FULL`), 4 (>= 0x4000 reverse) and 7
+   (gain: g = w7² × 2 >> 16, played × g / 2048 and clipped at full scale, as sampler+'s `sp_tap`: 0 dB at 8192, +24 dB at
+   the top; 0.3.5 .. 0.3.7 took the top as 0 dB). Unverified on hardware: check that a fresh, untuned take sounds at the pitch it did in 0.3.4, that
+   the sampler's tune moves UZ-1's, and that trimming / reversing / turning down on the sampler's page follow. A rate
+   outside RATE_C4 / 64 .. x 32 is taken as not set.
 3. **Which key**: the page is the physical key, taken at key-down from the core's key velocity hook
    (`op1_key_velocity`, `key_page`): UZ-1 installs a pass-through when the hook is free, and reads keyvel's
    `op1_keyvel_diag` (`key`, `presses`) when keyvel holds it. Voices started before the next render after a press
@@ -60,7 +67,7 @@ Where the project stands and what to know before changing it. The plan it was bu
 
 ## Saved data
 
-`op1_engine_data`, version byte 1: bytes 0..7 the globals (version, source, start, length, tune, swing), 8..103 the
+`op1_engine_data`, version byte 1: bytes 0..7 the globals (version, source, start, length, tune, swing; byte 6 bit 0 from 0.3.5: tune is 0 .. 48, centre 24, not 0 .. 24, centre 12), 8..103 the
 24 key words (`FLD`, 32 bits, all used), 104..127 a flag byte per key (from 0.3: `KF_CHOKE`, `KF_REV`, `KF_SAG`, ATTK in bits 3..6), 128..151
 RATCHET's count per key (2 .. 24, from 0.3.1; 0 or missing: the key word's old 3-bit index, `COUNTS`). The key
 word's COUNT field is now FLAM's GAP only. A reader takes what

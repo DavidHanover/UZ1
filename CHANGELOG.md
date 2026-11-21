@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.8 — 2026-11-20
+
+- The sampler's gain is taken as the sampler plays it: a quarter of its knob is 0 dB and the top +24 dB, with the
+  sampler's hard clip at full scale. 0.3.5 .. 0.3.7 took the top of the knob as 0 dB, so a sample boosted on the
+  sampler came out up to 24 dB quieter in UZ-1, and never clipped. Sounds whose source sampler has its gain above a
+  quarter now play louder.
+
+## 0.3.7 — 2026-11-20
+
+- SLOPE has no stop: a sinker keeps dropping and a riser keeps climbing every hit (they stopped at ±24 semitones),
+  until the hits are a rumble or a tick. A hit plays 4 s at most, then fades.
+
+## 0.3.6 — 2026-11-20
+
+- TUNE (T2 white) runs -24 to +24 semitones (it was ±12). Sounds saved before keep their tune.
+
+## 0.3.5 — 2026-11-20
+
+- UZ-1 starts from the sampler's own settings on the source slot: it plays only the part between the sampler's start
+  and end points (trim it there, and START and LENGTH cut into that), TUNE 0 is the sampler's tune (its pitch on
+  middle C), the sampler's gain scales LEVEL, and its direction is the way the keys play (REV flips it). A slot that
+  isn't a sampler any more plays as before: the whole recording, as recorded. Taken from TYR8's sample layer.
+
 ## 0.3.4 — 2026-11-20
 
 - LEVEL's last step is OFF (it was -30 dB; the lowest sounding step is now -28 dB). A key at OFF plays nothing and

@@ -35,6 +35,13 @@ UZ-1 plays a recording made with the OP-1's own **sampler** on another synth slo
 UZ-1 skips the silence before the recording, so a key sounds the moment you press it. Record again in the sampler slot
 any time; UZ-1 picks the new take up within a moment.
 
+The sampler's own settings are where UZ-1's start. It plays the part between the sampler's **start and end** points,
+so trim the take on the sampler's page and UZ-1 follows (START and LENGTH then cut into that part). The sampler's
+**tune** is UZ-1's TUNE 0 (the pitch the sampler plays it at on middle C), its **gain** (up to +24 dB, clipping at full scale
+as the sampler does) is what every key's LEVEL starts from, and
+its **direction** is the way every key plays it: a key with REV plays it the other way round. The sampler's loop and
+envelope don't apply.
+
 ## How a key plays
 
 Every key is a player with its own settings, and all 24 play the same sample. **Press a key** and it plays at once,
@@ -79,10 +86,13 @@ the keyvel feature) scales it all.
 **ATTK** (Shift + white push switches the knob from GATE): each hit fades in, from off up to 128 ms. A few ms takes
 the click off; longer makes brushes and swells.
 
-**REV** (white push): the key plays the sample backwards, from the end of its LENGTH back to START. The top of the
+**REV** (white push): the key plays the sample backwards, from the end of its LENGTH back to START (or forwards, if
+the sampler is set to reverse). The top of the
 screen shows it, e.g. `F#1 REV CHOKE`.
 
-**SLOPE** moves the pitch hit by hit: a sinker (−) drops each repeat, a riser (+) climbs, up to 24 semitones.
+**SLOPE** moves the pitch hit by hit: a sinker (−) drops each repeat, a riser (+) climbs, with no limit: a long ratchet or a held
+HOLD keeps going until it is a rumble or a tick (a hit plays
+4 s at most).
 
 **Copy and paste:** push blue to copy the shown key's settings, play another key, push green: its settings are
 replaced by the copy, all of them, at once. The top of the screen flashes COPIED (with the key) or PASTED.
@@ -98,7 +108,7 @@ SLOPE, with a single hit), COUNT for HOLD, RATE for FLAM.
 |---|---|---|
 | Blue | **START**: skip into the recording, 0 .. 200 ms | – |
 | Green | **LENGTH**: 10 ms .. 1.9 s, or the whole recording | – |
-| White | **TUNE**: all keys, ±12 semitones | – |
+| White | **TUNE**: all keys, ±24 semitones from the sampler's own tune | – |
 | Orange | **SWING**: 50 .. 75 %, every second hit later | **SOURCE**: AUTO, slot 1 .. 8 |
 
 Everything is saved with the sound.

@@ -10,7 +10,7 @@
  *   white  RATE: 1/8 .. 1/64T            GATE, or ATTK                 REV on / off (Shift: GATE / ATTK)
  *   orange PITCH +-12                    SLOPE: pitch per hit +-6      CHOKE on / off (Shift: reset this key)
  *
- *   T2     blue START  green LENGTH  white TUNE  orange SWING; orange push steps the SOURCE slot (AUTO, 1 .. 8)
+ *   T2     blue START  green LENGTH  white TUNE +-24  orange SWING; orange push steps the SOURCE slot (AUTO, 1 .. 8)
  *
  * Modes: HOLD repeats at the rate while the key is down; RATCHET plays COUNT hits and finishes whatever the key does;
  * FLAM plays a soft grace note and the main hit GAP ms later; ONE plays one hit. A new hit cuts the one before it on the
@@ -50,6 +50,9 @@
 #define NO_CLOCK  (22050 << 14)               /* beat length at 120 BPM, when the OP-1 has no clock yet */
 #define PAGE_BASE 53                          /* MIDI F3: the first page */
 #define SRC_AUTO  8
+#define LIFE_MAX  (4 * 88200)                 /* the longest a hit plays, voice samples: 4 s, then its fade */
+#define TUNE_0    24                          /* TUNE: 0 .. 48, -24 .. +24 semitones */
+#define G_TUNE24  1                           /* globals byte 6: TUNE is stored as 0 .. 48 (from 0.3.5; before, 0 .. 24) */
 #define SCAN_THR  256                         /* -42 dBFS: where the sample starts and ends */
 #define RESCAN    64                          /* render calls between source scans (about 90 ms with one voice) */
 
@@ -171,7 +174,7 @@ static inline int32_t atk_samples(int a) { return a ? (int32_t)((pow2_96((a - 1)
 
 static void sound_defaults(sound_t *s)
 {
-    s->src = SRC_AUTO; s->start = 0; s->len = 100; s->tune = 12; s->swing = 0;
+    s->src = SRC_AUTO; s->start = 0; s->len = 100; s->tune = TUNE_0; s->swing = 0;
     for (int k = 0; k < 24; k++) { s->cfg[k] = CFG_DEFAULT; s->flags[k] = 0; s->cnt[k] = CNT_DEF; }
 }
 static void sound_read(int slot, sound_t *s)
@@ -183,7 +186,8 @@ static void sound_read(int slot, sound_t *s)
     s->src = b[1] <= SRC_AUTO ? b[1] : SRC_AUTO;
     s->start = b[2] <= 100 ? b[2] : 100;
     s->len = b[3] >= 1 && b[3] <= 100 ? b[3] : 100;
-    s->tune = b[4] <= 24 ? b[4] : 12;
+    if (b[6] & G_TUNE24) s->tune = b[4] <= 2 * TUNE_0 ? b[4] : TUNE_0;   /* from 0.3.5: -24 .. +24, */
+    else s->tune = b[4] <= 24 ? b[4] + 12 : TUNE_0;          /* before: -12 .. +12 */
     s->swing = b[5] <= 25 ? b[5] : 0;
     for (int k = 0; k < 24 && 8 + 4 * k + 4 <= n; k++) {
         const uint8_t *p = b + 8 + 4 * k;
@@ -199,7 +203,7 @@ static void sound_read(int slot, sound_t *s)
 static void sound_store(int slot)
 {
     uint8_t b[DATA_N];
-    b[0] = DATA_VER; b[1] = snd.src; b[2] = snd.start; b[3] = snd.len; b[4] = snd.tune; b[5] = snd.swing; b[6] = b[7] = 0;
+    b[0] = DATA_VER; b[1] = snd.src; b[2] = snd.start; b[3] = snd.len; b[4] = snd.tune; b[5] = snd.swing; b[6] = G_TUNE24; b[7] = 0;
     for (int k = 0; k < 24; k++) {
         const uint32_t c = snd.cfg[k];
         b[8 + 4 * k] = (uint8_t)c; b[9 + 4 * k] = (uint8_t)(c >> 8); b[10 + 4 * k] = (uint8_t)(c >> 16); b[11 + 4 * k] = (uint8_t)(c >> 24);
@@ -225,7 +229,15 @@ static void sound_sync(int slot)
 }
 
 /* ---- the sample: another slot's sampler recording ---- */
-typedef struct { const int16_t *d; int32_t on, end; int8_t slot; uint8_t ok; } src_t;
+/* the recording's part to play and how the sampler plays it: its rate (88200 / (base frequency x 16384), Q31: R246's
+ * sampler voice reads key's phase increment x rate >> 38 samples a voice sample, sampler+'s sp_voice.c), its gain (Q11)
+ * and its direction. UZ-1 plays at the sampler's pitch for middle C, so its TUNE 0 is the sampler's tune */
+typedef struct { const int16_t *d; int32_t on, end, rate, gain; int8_t slot; uint8_t ok, rev; } src_t;
+/* the sampler's gain, as its voice (sampler+'s sp_tap, bit-exact): g = w7^2 x 2 >> 16, and the sample comes out x g x 2
+ * x 16 >> 16, saturated at full scale: x g / 2048, so a quarter of the knob (8192) is 0 dB, the top +24 dB, hard-clipped.
+ * Kept as that factor, Q11 */
+#define SMP_UNITY 2048
+#define RATE_C4 44187388                      /* a recording based at middle C (261.6 Hz): plays as recorded */
 static src_t srcb[2];
 static volatile uint8_t src_i;
 static volatile uint32_t calls, src_at;
@@ -248,23 +260,53 @@ static int sb_open(int slot, const int16_t **d, const int16_t **pk, int32_t *cap
     *cap = c;
     return 1;
 }
-/* where the recording starts and ends, from the buffer's peaks (one a 256 samples), then the first loud sample */
+/* the slot's engine is the synth sampler (R246's engine 6; the table kennel's kn_sampler.c reads), and its rate: the
+ * slot's sampler object (0x01DF6F78[slot], op1_sample_buffer's) +4, set from the sound's base frequency */
+#ifndef OP1_HOST
+static inline int slot_is_sampler(int s) { return *(volatile int *)(0xFF8016E4 + (s & 7) * 4) == 6; }
+static inline int32_t slot_rate(int s) { const int32_t *o = ((const int32_t *const *)0x01DF6F78)[s & 7]; return o ? o[1] : 0; }
+#else
+static int host_sampler_type[8];
+static int32_t host_sampler_rate[8];
+static inline int slot_is_sampler(int s) { return host_sampler_type[s & 7] == 6; }
+static inline int32_t slot_rate(int s) { return host_sampler_rate[s & 7]; }
+#endif
+#define SMP_FULL (OP1_SAMPLE_MAX - OP1_SAMPLE_GUARD)      /* the sampler's markers are fractions of this, 32768 = 1 */
+/* where the recording starts and ends: between the sampler's own START and END markers (its knob words 0 and 3, as
+ * the user trimmed it on the sampler's page; the whole buffer for a slot that is not a sampler any more), from the
+ * buffer's peaks (one a 256 samples) the loud part inside them, then its first loud sample */
 static int scan(int slot, src_t *o)
 {
     const int16_t *d, *pk;
     int32_t cap;
     o->ok = 0; o->slot = (int8_t)slot;
     if (!sb_open(slot, &d, &pk, &cap)) return 0;
+    int32_t m0 = 0, m1 = cap;
+    o->rate = RATE_C4; o->gain = SMP_UNITY; o->rev = 0;      /* not a sampler any more: as recorded */
+    if (slot_is_sampler(slot)) {
+        const int16_t *w = op1_synth_knobs(slot);
+        /* the sampler's own settings: its gain (word 7, squared, as its voice), its direction (word 4 bit 14), and
+         * its tune (the rate; something wild is taken as not set) */
+        const int32_t gw = w[7] < 0 ? 0 : w[7], g = (gw * gw * 2 + 0x8000) >> 16;
+        o->gain = g > 32767 ? 32767 : g;                      /* Q11: the voice plays it x g / 2048, up to 16x (+24 dB) */
+        o->rev = w[4] >= 0x4000;
+        const int32_t rt = slot_rate(slot);
+        if (rt > RATE_C4 / 64 && rt < RATE_C4 * 32) o->rate = rt;
+        const int32_t a = w[0] < 0 ? 0 : w[0], b = w[3] < 0 ? 0 : w[3];
+        const int32_t s0 = (int32_t)(((int64_t)a * SMP_FULL) >> 15), s1 = (int32_t)(((int64_t)b * SMP_FULL) >> 15);
+        if (s1 > s0) { m0 = s0; m1 = s1 < cap ? s1 : cap; }
+    }
     const int nb = cap / 256 < OP1_PEAK_BUCKETS ? cap / 256 : OP1_PEAK_BUCKETS;
     int i0 = -1, i1 = -1;
-    for (int i = 0; i < nb; i++) {
+    for (int i = m0 / 256; i < nb && i * 256 < m1; i++) {
         const int p = pk[i] < 0 ? -pk[i] : pk[i];
         if (p >= SCAN_THR) { if (i0 < 0) i0 = i; i1 = i; }
     }
     if (i0 < 0) return 0;
-    int32_t on = i0 * 256, e = (i1 + 1) * 256;
-    for (int32_t i = on; i < on + 256; i++) { const int s = d[i] < 0 ? -d[i] : d[i]; if (s >= SCAN_THR / 2) { on = i; break; } }
-    on = on > 16 ? on - 16 : 0;                               /* a little before the transient */
+    int32_t on = i0 * 256 > m0 ? i0 * 256 : m0, e = (i1 + 1) * 256;
+    if (e > m1) e = m1;
+    for (int32_t i = on; i < on + 256 && i < e; i++) { const int a = d[i] < 0 ? -d[i] : d[i]; if (a >= SCAN_THR / 2) { on = i; break; } }
+    on = on - 16 > m0 ? on - 16 : m0;                         /* a little before the transient, not before START */
     if (e > cap - 2) e = cap - 2;
     if (e - on < 64) return 0;
     o->d = d; o->on = on; o->end = e; o->ok = 1;
@@ -296,7 +338,8 @@ typedef struct {
     uint32_t cfg;
     int32_t hit, cd, vel;                                     /* hits played, Q8 voice samples to the next */
     const int16_t *d;
-    int32_t s0, s1;
+    int32_t s0, s1, rate, sg;                    /* the sample's span; the sampler's rate and gain (Q11, clipped at full scale as it does) */
+    uint8_t srev;                                 /* the sampler plays it backwards */
     uint32_t rng, stamp;
     ph_t ph[2];
 } voice_t;
@@ -395,7 +438,7 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
             const int32_t ms = (int32_t)((10u * pow2_96(snd.len * 737 / 100)) >> 16);   /* 10 ms .. 1.9 s */
             if (s0 + ms * 441 / 10 < s1) s1 = s0 + ms * 441 / 10;
         }
-        if (s1 - s0 >= 64) { t->d = s->d; t->s0 = s0; t->s1 = s1; }
+        if (s1 - s0 >= 64) { t->d = s->d; t->s0 = s0; t->s1 = s1; t->rate = s->rate; t->sg = s->gain; t->srev = s->rev; }
     }
     const int off = fget(c, K_LEVEL) == 0;                   /* LEVEL OFF: a silent key that only chokes */
     if (!t->d || off) t->stop = 1;
@@ -434,12 +477,17 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
     if (pat < 0) pat = 0;
     const int32_t g = (int32_t)(((((int64_t)t->vel * level_gain(fget(c, K_LEVEL))) >> 15) * pat) >> 15);
     /* pitch: tune + the key's pitch + the slope so far, in half semitones */
-    int32_t sl = (fget(c, K_SLOPE) - 12) * k;
-    sl = sl < -48 ? -48 : (sl > 48 ? 48 : sl);
-    int32_t h = 2 * (snd.tune - 12) + 2 * (fget(c, K_PITCH) - 12) + sl;
-    h = h < -96 ? -96 : (h > 72 ? 72 : h);
-    const uint32_t st = pitch_step(h);
-    int32_t life = (int32_t)((((int64_t)(t->s1 - 1 - t->s0)) << 16) / st);
+    /* SLOPE has no stop: the pitch keeps climbing or sinking hit by hit, until it is a tick or a rumble (pow2_96's
+     * 16 octaves each way are the only bound; a HOLD rides there) */
+    const int32_t kk = k < 1000 ? k : 1000;
+    int32_t h = 2 * (snd.tune - TUNE_0) + 2 * (fget(c, K_PITCH) - 12) + (fget(c, K_SLOPE) - 12) * kk;
+    h = h < -380 ? -380 : (h > 380 ? 380 : h);
+    uint64_t st64 = ((uint64_t)pitch_step(h) * (uint32_t)t->rate) / RATE_C4;   /* at the sampler's tune */
+    if (st64 > (1u << 30)) st64 = 1u << 30;                  /* past the sample in one step: a single sample */
+    if (st64 < 1) st64 = 1;
+    const uint32_t st = (uint32_t)st64;
+    const int64_t life64 = (((int64_t)(t->s1 - 1 - t->s0)) << 16) / st;
+    int32_t life = life64 > LIFE_MAX ? LIFE_MAX : (int32_t)life64;   /* a hit sunk out of hearing frees its voice */
     if (fget(c, K_GATE) < 15) { const int32_t gs = gate_samples(fget(c, K_GATE)); if (gs < life) life = gs; }
     if (life < 1) life = 1;
     /* choke: the hit playing fades out under the new one */
@@ -450,7 +498,7 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
         t->ph[1].dg = -(t->ph[1].g / t->ph[1].life) - 1;
     }
     ph_t *p = &t->ph[0];
-    p->rev = (t->flags & KF_REV) != 0;
+    p->rev = ((t->flags & KF_REV) != 0) ^ t->srev;             /* REV flips the sampler's direction */
     p->i = p->rev ? t->s1 - 1 : t->s0; p->fr = 0; p->st = st; p->g = g; p->life = life;
     p->dg = life <= FADE ? -(g / life) - 1 : 0;
     p->arem = atk_samples(atk_of(t->flags));                  /* ATTK: the hit fades in */
@@ -464,7 +512,7 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
     t->cd += ivk;
     t->hit++;
     const uint32_t w = vis_w;
-    vis_ring[w & 15].g = (int16_t)(g > 32767 ? 32767 : g); vis_ring[w & 15].h = (int8_t)h; vis_ring[w & 15].key = t->key;
+    vis_ring[w & 15].g = (int16_t)(g > 32767 ? 32767 : g); vis_ring[w & 15].h = (int8_t)(h < -96 ? -96 : (h > 96 ? 96 : h)); vis_ring[w & 15].key = t->key;
     vis_w = w + 1;
 }
 
@@ -491,6 +539,7 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
     const int32_t sw = snd.swing * 32768 / 50;
     const int more = !t->stop && (t->mode == M_HOLD ? (t->held || t->hit == 0) : t->hit < t->n);
     const int16_t *d = t->d;
+    const int32_t sg = t->sg;
     const int32_t s0 = t->s0, s1 = t->s1;
     for (int n = 0; n < OP1_BLOCK; n++) {
         if (more && t->cd <= 0 && (t->mode == M_HOLD || t->hit < t->n)) hit_start(t, v, n, iv, sw);
@@ -500,7 +549,9 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
             ph_t *p = &t->ph[j];
             if (p->life <= 0) continue;
             const int32_t a = d[p->i], bb = d[p->rev ? p->i - 1 : p->i + 1];   /* REV: towards the start */
-            const int32_t s = a + (((bb - a) * (int32_t)(p->fr >> 1)) >> 15);
+            int32_t s = a + (((bb - a) * (int32_t)(p->fr >> 1)) >> 15);
+            s = (s * sg) >> 11;                                       /* the sampler's gain and its clip: what it plays */
+            s = s > 32767 ? 32767 : (s < -32767 ? -32767 : s);
             y += (s * (p->g > 32767 ? 32767 : p->g)) >> 15;
             p->fr += p->st;
             if (p->rev) p->i -= (int32_t)(p->fr >> 16); else p->i += (int32_t)(p->fr >> 16);
@@ -561,7 +612,7 @@ static int uz_input(int page, int ev, int a, int b)
             switch (a) {
             case 0: snd.start = (uint8_t)clampi(snd.start + dd, 0, 100); break;
             case 1: snd.len = (uint8_t)clampi(snd.len + dd, 1, 100); break;
-            case 2: snd.tune = (uint8_t)clampi(snd.tune + dd, 0, 24); break;
+            case 2: snd.tune = (uint8_t)clampi(snd.tune + dd, 0, 2 * TUNE_0); break;
             default: snd.swing = (uint8_t)clampi(snd.swing + dd, 0, 25); break;
             }
         } else {
@@ -1375,7 +1426,7 @@ static void uz_t2_update(void *scr, int dt)
     if (view.len >= 100) txt[1][put_str(txt[1], 0, "FULL")] = 0;
     else { len_ms = (int32_t)((10u * pow2_96(view.len * 737 / 100)) >> 16); txt[1][put_ms(txt[1], 0, len_ms)] = 0; }
     val[1] = view.len * 32767 / 100;
-    txt[2][put_num(txt[2], 0, view.tune - 12, 1)] = 0; val[2] = view.tune * 32767 / 24;
+    txt[2][put_num(txt[2], 0, view.tune - TUNE_0, 1)] = 0; val[2] = view.tune * 32767 / (2 * TUNE_0);
     txt[3][put_str(txt[3], put_num(txt[3], 0, 50 + view.swing, 0), "%")] = 0; val[3] = view.swing * 32767 / 25;
     labels(r, name, txt, val);
 
