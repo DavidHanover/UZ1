@@ -2,16 +2,15 @@
 
 Where the project stands and what to know before changing it. The plan it was built from is `PLAN.md`.
 
-## State (0.2.0)
+## State (0.3.9, 2026-11-21)
 
-- Everything in `PLAN.md` phases 1–6 is built and passes the host checks (`./build.sh test`).
-- **Run on an OP-1 (0.1.x, by the owner):** it loads, and plays a hat recorded with the sampler on another slot
-  (AUTO found it). Before that it played a plain sine: AUTO had found an old buffer on another slot, which is how
-  it learnt that a slot's buffer can hold audio while the slot's sound is not a sampler (item 1 below).
-- Fixed after that first session: the key shown wandered through notes (the page came from the pitch, which
-  portamento bends: now the physical key, item 3), the lower labels were under the screen's edge (y 150), RATCHET
-  seemed missing (MODE order).
-- Still to check on hardware: the rest of the list below, and 0.2's key reading and screen load.
+- `main` at 0.3.9, tag `v0.3.9` (commit `f7a3912`); 143 host checks pass (`./build.sh test`); `build/uz1.knl` is
+  40,104 bytes. The owner makes the GitHub release pages in the browser and attaches `uz1.knl`.
+- **On hardware:** the owner plays every build on their OP-1 and reports 0.3.9 sounding right; reading another slot's
+  sample and the physical key pages have been confirmed since 0.1 / 0.2. Still unverified as raw reads: the
+  sampler's engine type, rate and knob words 4 and 7 (2b below), each with a safe fallback.
+- Since 0.2: MODE order ONE / FLAM / RATCHET / HOLD, COUNT 2 .. 24, VEL positions, ATTK, REV, CHOKE, LEVEL OFF, the
+  sampler's settings as UZ-1's zero, TUNE ±24, endless SLOPE, RATE 1/4 .. 1/128 (see `CHANGELOG.md`).
 
 ## Check first on hardware
 

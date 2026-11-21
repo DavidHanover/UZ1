@@ -5,9 +5,9 @@
  * are spaced by the OP-1 tempo.
  *
  *   T1     turn                          Shift + turn                  push
- *   blue   MODE: one ratchet hold flam   VEL: flat, alt lo mid hi, hum lo hi, ramp lo hi, sag lo hi   copy this key
- *   green  COUNT 2 .. 24 (flam: GAP)     LEVEL                         paste the copy over this key
- *   white  RATE: 1/8 .. 1/64T            GATE, or ATTK                 REV on / off (Shift: GATE / ATTK)
+ *   blue   MODE: one flam ratchet hold   VEL: flat, alt lo mid hi, hum lo hi, ramp lo hi, sag lo hi   copy this key
+ *   green  COUNT 2 .. 24 (flam: GAP)     LEVEL, or OFF                 paste the copy over this key
+ *   white  RATE: 1/4 .. 1/128            GATE, or ATTK                 REV on / off (Shift: GATE / ATTK)
  *   orange PITCH +-12                    SLOPE: pitch per hit +-6      CHOKE on / off (Shift: reset this key)
  *
  *   T2     blue START  green LENGTH  white TUNE +-24  orange SWING; orange push steps the SOURCE slot (AUTO, 1 .. 8)
