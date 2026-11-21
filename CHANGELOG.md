@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.9 — 2026-11-21
+
+- RATE runs 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T, 1/64, 1/64T, 1/128 (it was 1/8 .. 1/64T). Each key's rate
+  has its own byte in the saved data (176 bytes); sounds saved before keep their rates, and the key word's old field
+  is still written for older builds (1/4 and 1/4T read there as 1/8, 1/128 as 1/64T).
+
 ## 0.3.8 — 2026-11-20
 
 - The sampler's gain is taken as the sampler plays it: a quarter of its knob is 0 dB and the top +24 dB, with the

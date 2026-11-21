@@ -297,12 +297,27 @@ int main(int argc, char **argv)
         reset(); on(0, 60, 127); run_blocks(1); off(0);
         for (int i = 0; i < 4000 && any_active(); i++) run_blocks(1);
         if (hits_of(0) != COUNTS[ci]) badn++;
-        const double iv = 5292000.0 / tempi[ti] / RATE_DEN[rt];
+        const double iv = 5292000.0 / tempi[ti] / (RATE_HB[rt + 2] / 2.0);   /* (kcfg's rt: the old field, 1/8 .. 1/64T) */
         for (int h = 0; h < nhits; h++) { const int e = (int)fabs(hits[h].pos - h * iv); if (e > worst) worst = e; }
     }
     bpm(120);
     CHECK(badn == 0, "RATCHET plays exactly COUNT hits, at every rate and tempo (%d wrong)", badn);
     CHECK(worst <= 1, "each hit lands within a sample of the beat grid from the key (worst %d samples)", worst);
+    { /* 0.3.9: RATE 1/4, 1/4T and 1/128, in their own byte a key */
+      const int ri[3] = { 0, 1, 10 }; int ok = 1; double gaps[3];
+      for (int q = 0; q < 3; q++) {
+          sound1(kcfg(M_RATCHET, 2, 0, 0, 0, V_FLAT, 0, 15, 15));
+          for (int k = 0; k < 24; k++) host_eng_data[0][DATA_RATE + k] = (uint8_t)(ri[q] + 1);
+          snd_slot = -1;
+          reset(); on(0, 60, 127); run_blocks(1); off(0);
+          for (int i = 0; i < 6000 && any_active(); i++) run_blocks(1);
+          const double iv = 5292000.0 / 120 / (RATE_HB[ri[q]] / 2.0);
+          gaps[q] = nhits > 1 ? (hits[1].pos - hits[0].pos) / 88.2 : 0;
+          if (nhits != 4) ok = 0;
+          for (int h = 0; h < nhits; h++) if (fabs(hits[h].pos - h * iv) > 1) ok = 0;
+      }
+      CHECK(ok && fabs(gaps[0] - 500) < 0.1 && fabs(gaps[1] - 333.3) < 0.1 && fabs(gaps[2] - 15.6) < 0.1,
+            "RATE 1/4, 1/4T and 1/128 at 120 BPM: a hit every %.1f, %.1f and %.1f ms, on the grid", gaps[0], gaps[1], gaps[2]); }
     CHECK(hits[0].pos == 0, "the first hit is the key itself, not quantised");
 
     /* 4. fire and forget: the key goes up at once, the ratchet carries on, then the voice is given back */
@@ -551,6 +566,8 @@ int main(int argc, char **argv)
     host_eng_data[0][6] = G_TUNE24; host_eng_data[0][4] = 28;
     host_eng_data_n[0] = 8; sound_read(0, &snd);
     CHECK(snd.cfg[3] == CFG_DEFAULT && snd.src == 2, "short data: the globals, keys at their defaults");
+    host_eng_data_n[0] = DATA_RATE; sound_read(0, &snd);
+    CHECK(snd.rate[3] == fget(C24[3], K_RATE) + 2, "a sound saved before 0.3.9 (no rate bytes) keeps each key's rate (%s)", RATE_TXT[snd.rate[3]]);
     host_eng_data_n[0] = DATA_N; host_eng_data[0][0] = 7; sound_read(0, &snd);
     CHECK(snd.src == SRC_AUTO && snd.cfg[3] == CFG_DEFAULT, "another version: all defaults");
     for (int i = 0; i < DATA_N; i++) host_eng_data[0][i] = (uint8_t)(i * 37 + 11);
@@ -612,6 +629,13 @@ int main(int argc, char **argv)
     CHECK(fget(c7, K_MODE) == M_HOLD && stored_cfg(0, 7) == c7, "HOLD: COUNT does nothing (it repeats while held)");
     turn(OP1_ENG_T1, 2, 1, 0);
     CHECK(fget(stored_cfg(0, 7), K_RATE) == 3, "HOLD: RATE does");
+    { /* the white knob runs RATE 1/4 .. 1/128 and stops at both ends; the old field follows, as near as it goes */
+      turn(OP1_ENG_T1, 2, -20, 0); const int lo = host_eng_data[0][DATA_RATE + 7], flo = fget(stored_cfg(0, 7), K_RATE);
+      turn(OP1_ENG_T1, 2, 30, 0); const int hi = host_eng_data[0][DATA_RATE + 7], fhi = fget(stored_cfg(0, 7), K_RATE);
+      snd_slot = -1; sound_sync(0);
+      CHECK(lo == 1 && hi == RATE_N && flo == 0 && fhi == 7 && snd.rate[7] == RATE_N - 1,
+            "RATE turns from 1/4 to 1/128 and stops there (bytes %d .. %d; the old field %d .. %d for older builds)", lo, hi, flo, fhi);
+      turn(OP1_ENG_T1, 2, -30, 0); turn(OP1_ENG_T1, 2, 5, 0); }
     turn(OP1_ENG_T1, 0, -2, 0); c7 = stored_cfg(0, 7);                          /* FLAM, two back */
     turn(OP1_ENG_T1, 2, 2, 0);
     CHECK(fget(c7, K_MODE) == M_FLAM && stored_cfg(0, 7) == c7, "FLAM: RATE does nothing");

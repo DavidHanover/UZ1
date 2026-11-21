@@ -33,8 +33,9 @@
 
 #define UZ_NAME   "uz1"
 #define DATA_VER  1
-#define DATA_N    152                         /* 8 globals, 24 x 4 key words, 24 key flag bytes (0.3), 24 counts (0.3.1) */
+#define DATA_N    176                         /* 8 globals, 24 x 4 key words, 24 key flag bytes (0.3), 24 counts (0.3.1), 24 rates (0.3.9) */
 #define DATA_CNT  128                         /* where the counts start */
+#define DATA_RATE 152                         /* where the rates start: RATE + 1 (0: not stored, the key word's old 3-bit field) */
 #define CNT_MIN   2                           /* RATCHET's COUNT: 2 .. 24 hits, one a click */
 #define CNT_MAX   24
 #define CNT_DEF   4
@@ -73,8 +74,12 @@ static inline uint32_t fset(uint32_t c, int f, int v)
 
 static const uint8_t COUNTS[8]   = { 2, 3, 4, 5, 6, 8, 10, 12 };   /* RATCHET's counts in the key word before 0.3.1 */
 static const uint8_t FLAM_MS[8]  = { 10, 15, 20, 25, 30, 40, 50, 60 };
-static const uint8_t RATE_DEN[8] = { 2, 3, 4, 6, 8, 12, 16, 24 };       /* beats / den: 1/8 1/8T 1/16 1/16T .. 1/64T */
-static const char *const RATE_TXT[8] = { "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64", "1/64T" };
+/* RATE, 1/4 .. 1/128: hits a beat x 2 (a hit every 2 / RATE_HB beats). Its own byte a key from 0.3.9; the key word's 3-bit
+ * field (1/8 .. 1/64T, this index - 2) is kept for older builds */
+#define RATE_N    11
+#define RATE_DEF  6                           /* 1/32, as CFG_DEFAULT's field (4) */
+static const uint8_t RATE_HB[RATE_N] = { 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64 };
+static const char *const RATE_TXT[RATE_N] = { "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/32T", "1/64", "1/64T", "1/128" };
 static const char *const MODE_TXT[M_N] = { "HOLD", "RATCHET", "FLAM", "ONE" };
 /* the MODE knob's order (the saved values stay as the enum): ONE, the default, first */
 static const uint8_t MODE_ORDER[M_N] = { M_ONE, M_FLAM, M_RATCHET, M_HOLD };
@@ -131,7 +136,7 @@ static int midi_of(uint32_t inc)
 }
 
 /* ---- the sound: globals and the 24 keys (a copy of the slot's data) ---- */
-typedef struct { uint8_t src, start, len, tune, swing; uint32_t cfg[24]; uint8_t flags[24], cnt[24]; } sound_t;   /* cnt: RATCHET's hits */
+typedef struct { uint8_t src, start, len, tune, swing; uint32_t cfg[24]; uint8_t flags[24], cnt[24], rate[24]; } sound_t;   /* cnt: RATCHET's hits; rate: RATE */
 static sound_t snd;
 static volatile uint8_t snd_dirty;            /* pasted keys not yet stored (only input may store) */
 static volatile int8_t snd_slot = -1;
@@ -175,7 +180,7 @@ static inline int32_t atk_samples(int a) { return a ? (int32_t)((pow2_96((a - 1)
 static void sound_defaults(sound_t *s)
 {
     s->src = SRC_AUTO; s->start = 0; s->len = 100; s->tune = TUNE_0; s->swing = 0;
-    for (int k = 0; k < 24; k++) { s->cfg[k] = CFG_DEFAULT; s->flags[k] = 0; s->cnt[k] = CNT_DEF; }
+    for (int k = 0; k < 24; k++) { s->cfg[k] = CFG_DEFAULT; s->flags[k] = 0; s->cnt[k] = CNT_DEF; s->rate[k] = RATE_DEF; }
 }
 static void sound_read(int slot, sound_t *s)
 {
@@ -198,6 +203,8 @@ static void sound_read(int slot, sound_t *s)
     for (int k = 0; k < 24; k++) {                            /* RATCHET's count: its own byte, or (older data) the word's */
         const int c = DATA_CNT + k < n ? b[DATA_CNT + k] : 0;
         s->cnt[k] = (uint8_t)(c >= CNT_MIN && c <= CNT_MAX ? c : COUNTS[fget(s->cfg[k], K_COUNT)]);
+        const int rb = DATA_RATE + k < n ? b[DATA_RATE + k] : 0;   /* RATE: its own byte, or (older data) the word's */
+        s->rate[k] = (uint8_t)(rb >= 1 && rb <= RATE_N ? rb - 1 : fget(s->cfg[k], K_RATE) + 2);
     }
 }
 static void sound_store(int slot)
@@ -205,10 +212,12 @@ static void sound_store(int slot)
     uint8_t b[DATA_N];
     b[0] = DATA_VER; b[1] = snd.src; b[2] = snd.start; b[3] = snd.len; b[4] = snd.tune; b[5] = snd.swing; b[6] = G_TUNE24; b[7] = 0;
     for (int k = 0; k < 24; k++) {
-        const uint32_t c = snd.cfg[k];
+        const int ro = snd.rate[k] < 2 ? 0 : (snd.rate[k] > 9 ? 7 : snd.rate[k] - 2);
+        const uint32_t c = snd.cfg[k] = fset(snd.cfg[k], K_RATE, ro);   /* the old field, as near as it goes, for older builds */
         b[8 + 4 * k] = (uint8_t)c; b[9 + 4 * k] = (uint8_t)(c >> 8); b[10 + 4 * k] = (uint8_t)(c >> 16); b[11 + 4 * k] = (uint8_t)(c >> 24);
         b[DATA_N_V1 + k] = snd.flags[k];
         b[DATA_CNT + k] = snd.cnt[k];
+        b[DATA_RATE + k] = (uint8_t)(snd.rate[k] + 1);
     }
     op1_engine_data_store(slot, UZ_NAME, b, DATA_N);
     snd_dirty = 0;
@@ -217,7 +226,7 @@ static void sound_store(int slot)
 static void sound_copy(sound_t *d, const sound_t *s)
 {
     d->src = s->src; d->start = s->start; d->len = s->len; d->tune = s->tune; d->swing = s->swing;
-    for (int k = 0; k < 24; k++) { d->cfg[k] = s->cfg[k]; d->flags[k] = s->flags[k]; d->cnt[k] = s->cnt[k]; }
+    for (int k = 0; k < 24; k++) { d->cfg[k] = s->cfg[k]; d->flags[k] = s->flags[k]; d->cnt[k] = s->cnt[k]; d->rate[k] = s->rate[k]; }
 }
 /* the copy follows the current slot's data, except while pasted keys wait to be stored */
 static void sound_sync(int slot)
@@ -336,6 +345,7 @@ typedef struct {
     int8_t phys;                                  /* the physical key that played it, -1: not from the keys */
     uint8_t choke, flags;                         /* CHOKE: the next note started anywhere cuts it off; the key's flags */
     uint32_t cfg;
+    uint8_t ri;                                   /* RATE, 0 .. RATE_N - 1 */
     int32_t hit, cd, vel;                                     /* hits played, Q8 voice samples to the next */
     const int16_t *d;
     int32_t s0, s1, rate, sg;                    /* the sample's span; the sampler's rate and gain (Q11, clipped at full scale as it does) */
@@ -350,7 +360,7 @@ static volatile uint8_t have_clip, clip_key;     /* a key copied (blue push), wh
 static volatile uint8_t note_kind;               /* the last copy (1) or paste (2), for the screen's brief note */
 static volatile uint32_t note_seq;
 static volatile uint32_t clip;
-static volatile uint8_t clip_flags, clip_cnt;
+static volatile uint8_t clip_flags, clip_cnt, clip_rate;
 
 /* for the screen: every hit (its gain and pitch) into a ring, and how many hits the newest pattern has left */
 typedef struct { int16_t g; int8_t h; uint8_t key; } vis_hit_t;
@@ -426,6 +436,7 @@ static void voice_start(voice_t *t, int v, void *self, uint32_t inc)
     t->choke = t->flags & KF_CHOKE;
     t->mode = (uint8_t)fget(c, K_MODE);
     t->n = t->mode == M_RATCHET ? snd.cnt[page] : t->mode == M_FLAM ? 2 : 1;
+    t->ri = snd.rate[page] < RATE_N ? snd.rate[page] : RATE_DEF;
     t->vel = op1_voice_vel_gain(self);
     t->hit = 0; t->cd = 0;
     t->rng = t->stamp * 2654435761u ^ 0x9E3779B9u;
@@ -535,7 +546,7 @@ static void uz_render(void *self, int16_t *out, const int16_t *params)
     op1_beat_t b;
     op1_beat_clock(&b);
     const int32_t len = b.len > 0 ? b.len : NO_CLOCK;
-    const int32_t iv = (len >> 5) / RATE_DEN[fget(t->cfg, K_RATE)];    /* Q8 voice samples: len / 16384 * 2 * 256 / den */
+    const int32_t iv = (len >> 4) / RATE_HB[t->ri];                   /* Q8 voice samples: len / 16384 * 2 * 256 * 2 / hb */
     const int32_t sw = snd.swing * 32768 / 50;
     const int more = !t->stop && (t->mode == M_HOLD ? (t->held || t->hit == 0) : t->hit < t->n);
     const int16_t *d = t->d;
@@ -596,9 +607,9 @@ static int uz_input(int page, int ev, int a, int b)
                     if (s > 7) s = SRC_AUTO;
                     snd.src = (uint8_t)s; changed = 1; src_force = 1;
                 }
-            } else if (a == 0) { clip = snd.cfg[k]; clip_flags = snd.flags[k]; clip_cnt = snd.cnt[k]; clip_key = (uint8_t)k; have_clip = 1; note_kind = 1; note_seq++; }   /* blue: copy */
-            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; snd.flags[k] = clip_flags; snd.cnt[k] = clip_cnt; changed = 1; note_kind = 2; note_seq++; } }   /* green: paste */
-            else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; snd.flags[k] = 0; snd.cnt[k] = CNT_DEF; changed = 1; }               /* Shift + orange: reset */
+            } else if (a == 0) { clip = snd.cfg[k]; clip_flags = snd.flags[k]; clip_cnt = snd.cnt[k]; clip_rate = snd.rate[k]; clip_key = (uint8_t)k; have_clip = 1; note_kind = 1; note_seq++; }   /* blue: copy */
+            else if (a == 1) { if (have_clip) { snd.cfg[k] = clip; snd.flags[k] = clip_flags; snd.cnt[k] = clip_cnt; snd.rate[k] = clip_rate; changed = 1; note_kind = 2; note_seq++; } }   /* green: paste */
+            else if (a == 3 && shift) { snd.cfg[k] = CFG_DEFAULT; snd.flags[k] = 0; snd.cnt[k] = CNT_DEF; snd.rate[k] = RATE_DEF; changed = 1; }               /* Shift + orange: reset */
             else if (a == 3) { snd.flags[k] ^= KF_CHOKE; changed = 1; }                                       /* orange: CHOKE on / off */
             else if (a == 2 && shift) white_attk ^= 1;                                                         /* Shift + white: GATE / ATTK */
             else if (a == 2) { snd.flags[k] ^= KF_REV; changed = 1; }                                         /* white: REV on / off */
@@ -623,6 +634,11 @@ static int uz_input(int page, int ev, int a, int b)
             if (f == K_GATE && white_attk) {                  /* ATTK, in the key's flags */
                 const int at = clampi(atk_of(snd.flags[k]) + dd, 0, 15);
                 snd.flags[k] = (uint8_t)((snd.flags[k] & ~KF_ATK) | (at << KF_ATK_SH));
+                sound_store(slot);
+                return 1;
+            }
+            if (f == K_RATE) {                                /* RATE: its own byte, 1/4 .. 1/128 */
+                snd.rate[k] = (uint8_t)clampi(snd.rate[k] + dd, 0, RATE_N - 1);
                 sound_store(slot);
                 return 1;
             }
@@ -1242,8 +1258,8 @@ static void uz_screen_update(void *scr, int dt)
         else if (mode == M_FLAM) { name[1] = "GAP"; txt[1][put_ms(txt[1], 0, FLAM_MS[fget(c, K_COUNT)])] = 0; }
         else { name[1] = "COUNT"; txt[1][put_str(txt[1], 0, mode == M_HOLD ? "HELD" : "1")] = 0; }
         val[1] = !field_live(c, K_COUNT) ? -1 : mode == M_RATCHET ? (view.cnt[k] - CNT_MIN) * 32767 / (CNT_MAX - CNT_MIN) : fget(c, K_COUNT) * 32767 / 7;
-        name[2] = "RATE"; txt[2][put_str(txt[2], 0, field_live(c, K_RATE) ? RATE_TXT[fget(c, K_RATE)] : "-")] = 0;
-        val[2] = field_live(c, K_RATE) ? fget(c, K_RATE) * 32767 / 7 : -1;
+        name[2] = "RATE"; txt[2][put_str(txt[2], 0, field_live(c, K_RATE) ? RATE_TXT[view.rate[k]] : "-")] = 0;
+        val[2] = field_live(c, K_RATE) ? view.rate[k] * 32767 / (RATE_N - 1) : -1;
         name[3] = "PITCH"; txt[3][put_num(txt[3], 0, fget(c, K_PITCH) - 12, 1)] = 0;
         val[3] = fget(c, K_PITCH) * 32767 / 24;
     } else {
