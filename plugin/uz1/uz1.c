@@ -5,7 +5,7 @@
  * are spaced by the OP-1 tempo.
  *
  *   T1     turn                          Shift + turn                  push
- *   blue   MODE: one flam ratchet hold   VEL: flat, alt lo mid hi, hum lo hi, ramp lo hi, sag lo hi   copy this key
+ *   blue   MODE: one flam ratchet hold   VEL: flat, alt lo mid hi, trip, hum lo hi, ramp lo hi, sag lo hi   copy this key
  *   green  COUNT 2 .. 24 (flam: GAP)     LEVEL, or OFF                 paste the copy over this key
  *   white  RATE: 1/4 .. 1/128            GATE, or ATTK                 REV on / off (Shift: GATE / ATTK)
  *   orange PITCH +-12                    SLOPE: pitch per hit +-6      CHOKE on / off (Shift: reset this key)
@@ -42,7 +42,7 @@
 #define DATA_N_V1 104                         /* without the flags: 0.1 .. 0.2.1 */
 #define KF_CHOKE  1                           /* key flags: any other note cuts this one off, */
 #define KF_REV    2                           /* the sample plays backwards, */
-#define KF_SAG    4                           /* VEL's RAMP runs down instead of up (SAG), */
+#define KF_SAG    4                           /* VEL's RAMP runs down instead of up (SAG); with ALT: TRIP, */
 #define KF_ATK_SH 3                           /* and bits 3..6: ATTK, 0 (none) .. 15 (128 ms) */
 #define KF_ATK    (15 << KF_ATK_SH)
 #define KF_ALL    0x7F
@@ -148,17 +148,19 @@ static uint32_t cfg_clean(uint32_t c)
     for (int f = 0; f < K_N; f++) if (fget(c, f) > FLD[f].max) c = fset(c, f, FLD[f].max);
     return c;
 }
-/* the VEL knob's ten positions: FLAT; ALT (every second hit lower) lo, mid, hi; HUM (each hit a little lower at
- * random) lo, hi; RAMP (up across the hits) lo, hi; SAG (down across them) lo, hi. Kept as K_VEL and K_DEPTH (10 %
- * steps) in the key word, SAG as RAMP plus the KF_SAG flag */
-static const struct { uint8_t m, d, sag; const char *txt; } VELP[10] = {
+/* the VEL knob's eleven positions: FLAT; ALT (every second hit lower) lo, mid, hi; TRIP (in threes: loud, mid, low);
+ * HUM (each hit a little lower at random) lo, hi; RAMP (up across the hits) lo, hi; SAG (down across them) lo, hi.
+ * Kept as K_VEL and K_DEPTH (10 % steps) in the key word; SAG as RAMP plus the KF_SAG flag, TRIP as ALT plus it (0.3.10:
+ * older builds play it as ALT) */
+static const struct { uint8_t m, d, sag; const char *txt; } VELP[11] = {
     { V_FLAT, 0, 0, "FLAT" }, { V_ALT, 3, 0, "ALT LO" }, { V_ALT, 6, 0, "ALT MID" }, { V_ALT, 8, 0, "ALT HI" },
+    { V_ALT, 6, 1, "TRIP" },
     { V_HUMAN, 3, 0, "HUM LO" }, { V_HUMAN, 7, 0, "HUM HI" }, { V_RAMP, 7, 0, "RAMP LO" }, { V_RAMP, 10, 0, "RAMP HI" },
     { V_RAMP, 7, 1, "SAG LO" }, { V_RAMP, 10, 1, "SAG HI" } };
-enum { VELP_N = 10 };
+enum { VELP_N = 11 };
 static int vel_idx(uint32_t c, uint8_t fl)                  /* the position, or the nearest (older sounds' depths) */
 {
-    const int m = fget(c, K_VEL), d = fget(c, K_DEPTH), sag = m == V_RAMP && (fl & KF_SAG);
+    const int m = fget(c, K_VEL), d = fget(c, K_DEPTH), sag = (m == V_RAMP || m == V_ALT) && (fl & KF_SAG);
     int best = 0, bd = 99;
     for (int i = 0; i < VELP_N; i++) {
         if (VELP[i].m != m || VELP[i].sag != sag) continue;
@@ -472,7 +474,10 @@ static void hit_start(voice_t *t, int v, int n, int32_t iv, int32_t sw)
     const int32_t d = fget(c, K_DEPTH) * 3277;
     int32_t pat = 32767;
     switch (fget(c, K_VEL)) {
-    case V_ALT: if (k & 1) pat -= d; break;
+    case V_ALT:
+        if (t->flags & KF_SAG) { const int ph = k % 3; if (ph == 1) pat -= d / 2; else if (ph == 2) pat -= d; }   /* TRIP: loud, mid, low */
+        else if (k & 1) pat -= d;
+        break;
     case V_HUMAN: t->rng = t->rng * 1664525u + 1013904223u; pat -= (d * (int32_t)(t->rng >> 17)) >> 15; break;
     case V_RAMP: {                                            /* RAMP: up across the hits; SAG: down */
         const int nn = t->mode == M_HOLD ? 8 : t->n;

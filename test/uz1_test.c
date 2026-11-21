@@ -433,6 +433,14 @@ int main(int argc, char **argv)
     reset(); on(0, 60, 127); run_ms(300);
     CHECK(fabs(20 * log10(hits[0].g / 32767.0) + 6) < 0.1, "LEVEL three steps down: -6 dB (%.2f)", 20 * log10(hits[0].g / 32767.0));
 
+    { /* TRIP: in threes, loud, mid (70 %), low (40 %), over and over */
+      sound1(kcfg(M_RATCHET, 0, 6, 0, 0, V_ALT, 6, 15, 15)); for (int k = 0; k < 24; k++) { host_eng_data[0][DATA_CNT + k] = 9; key_flags(0, k, KF_SAG); }
+      reset(); on(0, 60, 127); run_blocks(1); off(0); run_ms(800);
+      int ok = nhits == 9;
+      for (int h = 0; h < nhits && ok; h++) { const double want = h % 3 == 0 ? 1.0 : h % 3 == 1 ? 0.7 : 0.4; if (fabs(hits[h].g / (double)hits[0].g - want) > 0.01) ok = 0; }
+      CHECK(ok, "TRIP: 9 hits go loud, mid, low three times (%d hits: %.2f %.2f %.2f %.2f)", nhits, nhits > 3 ? hits[1].g / (double)hits[0].g : 0, nhits > 3 ? hits[2].g / (double)hits[0].g : 0, nhits > 3 ? hits[3].g / (double)hits[0].g : 0, nhits > 4 ? hits[4].g / (double)hits[0].g : 0);
+      for (int k = 0; k < 24; k++) key_flags(0, k, 0); }
+
     /* 9. GATE: the hit is cut short, with a fade */
     sound1(kcfg(M_ONE, 0, 0, 0, 0, V_FLAT, 0, 4, 15));            /* 16 ms */
     reset(); on(0, 60, 127); run_ms(200);
@@ -606,7 +614,9 @@ int main(int argc, char **argv)
     c7 = stored_cfg(0, 7);
     CHECK(fget(c7, K_VEL) == V_ALT && fget(c7, K_DEPTH) == 8 && fget(c7, K_LEVEL) == 12 && fget(c7, K_GATE) == 4 && fget(c7, K_SLOPE) == 7, "Shift: VEL (three on: ALT HI, 80 %%), LEVEL, GATE, SLOPE");
     turn(OP1_ENG_T1, 0, 1, 1);
-    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_HUMAN && fget(stored_cfg(0, 7), K_DEPTH) == 3, "VEL: then HUM LO (30 %%)");
+    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_ALT && (host_eng_data[0][DATA_N_V1 + 7] & KF_SAG), "VEL: then TRIP (ALT with the flag)");
+    turn(OP1_ENG_T1, 0, 1, 1);
+    CHECK(fget(stored_cfg(0, 7), K_VEL) == V_HUMAN && fget(stored_cfg(0, 7), K_DEPTH) == 3 && !(host_eng_data[0][DATA_N_V1 + 7] & KF_SAG), "VEL: then HUM LO (30 %%), the flag off again");
     turn(OP1_ENG_T1, 0, 20, 1);
     CHECK(fget(stored_cfg(0, 7), K_VEL) == V_RAMP && fget(stored_cfg(0, 7), K_DEPTH) == 10 && (host_eng_data[0][DATA_N_V1 + 7] & KF_SAG), "VEL ends at SAG HI (a falling ramp, 100 %%)");
     turn(OP1_ENG_T1, 0, -2, 1);
@@ -673,7 +683,7 @@ int main(int argc, char **argv)
       play_key(14); push(OP1_ENG_T1, 0, 0); play_key(20); push(OP1_ENG_T1, 1, 0);
       CHECK(stored_cfg(0, 20) == full && host_eng_data[0][DATA_N_V1 + 20] == fl, "copy and paste carry every setting: the key word and CHOKE, REV, SAG (SAG LO), ATTK");
       snd_slot = -1; sound_sync(0);
-      CHECK(vel_idx(snd.cfg[20], snd.flags[20]) == 8 && atk_of(snd.flags[20]) == 11, "and read back: VEL SAG LO, ATTK 11");
+      CHECK(!strcmp(VELP[vel_idx(snd.cfg[20], snd.flags[20])].txt, "SAG LO") && atk_of(snd.flags[20]) == 11, "and read back: VEL SAG LO, ATTK 11");
       reset(); on(0, page_midi(14), 127); run_blocks(1); off(0); run_ms(1500); const int na = nhits; int ga[16]; for (int i = 0; i < na && i < 16; i++) ga[i] = hits[i].g;
       const size_t la = rec_n; int16_t *ra = malloc(la * 2); memcpy(ra, rec, la * 2);
       reset(); on(0, page_midi(20), 127); run_blocks(1); off(0); run_ms(1500);

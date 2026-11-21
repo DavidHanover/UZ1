@@ -73,12 +73,13 @@ corner of the screen in that encoder's colour shows it.
 
 | Encoder | Turn | Shift + turn | Push |
 |---|---|---|---|
-| Blue | **MODE**: one, flam, ratchet, hold | **VEL**: flat, alt lo/mid/hi, hum lo/hi, ramp lo/hi, sag lo/hi | copy this key |
+| Blue | **MODE**: one, flam, ratchet, hold | **VEL**: flat, alt lo/mid/hi, trip, hum lo/hi, ramp lo/hi, sag lo/hi | copy this key |
 | Green | **COUNT** 2 .. 24, one a click (flam: **GAP** 10 .. 60 ms) | **LEVEL** 0 .. -28 dB, then **OFF** | paste the copy over this key |
 | White | **RATE** 1/4, 1/4T, 1/8, 1/8T .. 1/64T, 1/128 | **GATE** 4 ms .. 512 ms, full, or **ATTK** off, 1 .. 128 ms | **REV** on / off (Shift: GATE or ATTK) |
 | Orange | **PITCH** ±12 semitones | **SLOPE** ±6 semitones a hit | **CHOKE** on / off (Shift: reset this key) |
 
-**VEL** patterns: **ALT** accent, ghost, accent, ghost (lo, mid, hi: the ghosts 30, 60, 80 % lower); **HUM** each
+**VEL** patterns: **ALT** accent, ghost, accent, ghost (lo, mid, hi: the ghosts 30, 60, 80 % lower); **TRIP** in
+threes, loud, mid, low (100, 70, 40 %), over and over: with a triplet RATE it rolls in triplets; **HUM** each
 hit a little lower at random (lo, hi: up to 30, 70 %); **RAMP** builds up across the hits (lo from 30 %, hi from
 silence); **SAG** dies away across them (lo to 30 %, hi to silence). The note's own velocity (MIDI, the sequencers, or
 the keyvel feature) scales it all.

@@ -67,7 +67,7 @@ Where the project stands and what to know before changing it. The plan it was bu
 ## Saved data
 
 `op1_engine_data`, version byte 1: bytes 0..7 the globals (version, source, start, length, tune, swing; byte 6 bit 0 from 0.3.5: tune is 0 .. 48, centre 24, not 0 .. 24, centre 12), 8..103 the
-24 key words (`FLD`, 32 bits, all used), 104..127 a flag byte per key (from 0.3: `KF_CHOKE`, `KF_REV`, `KF_SAG`, ATTK in bits 3..6), 128..151
+24 key words (`FLD`, 32 bits, all used), 104..127 a flag byte per key (from 0.3: `KF_CHOKE`, `KF_REV`, `KF_SAG`: SAG with RAMP, TRIP with ALT from 0.3.10, ATTK in bits 3..6), 128..151
 RATCHET's count per key (2 .. 24, from 0.3.1; 0 or missing: the key word's old 3-bit index, `COUNTS`). The key
 word's COUNT field is now FLAM's GAP only. 152..175 (from 0.3.9) RATE per key + 1 (1 .. 11: 1/4 .. 1/128, `RATE_HB`;
 0 or missing: the key word's 3-bit field + 2, which `sound_store` still writes, clamped, for older builds). A reader takes what

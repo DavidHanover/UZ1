@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.10 — 2026-11-21
+
+- VEL has TRIP, after ALT HI: the hits go in threes, loud, mid, low (100, 70, 40 %), over and over; with a triplet
+  RATE it rolls in triplets. Stored as ALT with a flag, so older builds play a TRIP key as ALT.
+
 ## 0.3.9 — 2026-11-21
 
 - RATE runs 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T, 1/64, 1/64T, 1/128 (it was 1/8 .. 1/64T). Each key's rate
